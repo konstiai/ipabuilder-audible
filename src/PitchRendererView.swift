@@ -613,7 +613,7 @@ struct PitchRendererView: View {
         }
     }
 
-    // MARK: - 9. Realistic Multi-Jointed 2.5D Football Player Renderer
+    // MARK: - 9. Realistic 2.5D Football Player Renderer
 
     private func drawArticulatedPlayer(context: inout GraphicsContext, size: CGSize, player: FieldPlayer) {
         let scale = engine.perspectiveScale(atY: player.position.y)
@@ -623,17 +623,17 @@ struct PitchRendererView: View {
         // Directional vectors (dirY > 0 = facing goal/away; dirY < 0 = facing camera)
         let dirX = sin(player.facingAngle)
         let dirY = cos(player.facingAngle)
-        let facingCamera = (dirY < -0.25)
+        let facingCamera = (dirY < -0.28)
 
-        // 1. Multi-layer Soft Ground Shadow
+        // 1. Soft Multi-Layer Ground Shadow
         let shadowScale = max(0.45, 1.0 - player.zHeight * 0.22)
-        let shadowW = (player.animState == .sliding ? 27.0 : 21.0) * scale * shadowScale
-        let shadowH = 9.2 * scale * shadowScale
+        let shadowW = (player.animState == .sliding ? 26.0 : 19.5) * scale * shadowScale
+        let shadowH = 8.4 * scale * shadowScale
         let gx = Double(groundScreen.x)
         let gy = Double(groundScreen.y)
         let shadowRect = CGRect(x: gx - shadowW * 0.5, y: gy - shadowH * 0.5, width: shadowW, height: shadowH)
-        context.fill(Path(ellipseIn: shadowRect), with: .color(.black.opacity(0.38)))
-        context.fill(Path(ellipseIn: shadowRect.insetBy(dx: CGFloat(shadowW * 0.18), dy: CGFloat(shadowH * 0.18))), with: .color(.black.opacity(0.24)))
+        context.fill(Path(ellipseIn: shadowRect), with: .color(.black.opacity(0.36)))
+        context.fill(Path(ellipseIn: shadowRect.insetBy(dx: CGFloat(shadowW * 0.2), dy: CGFloat(shadowH * 0.2))), with: .color(.black.opacity(0.22)))
 
         // Determine kit colors
         let primaryColor: Color
@@ -664,321 +664,379 @@ struct PitchRendererView: View {
         let skinColor = skinColors[player.skinToneIndex % skinColors.count]
         let hairColor = Color(hex: player.hairColorHex)
         let bootColor: Color = (player.side == .home) ? Color(red: 0.98, green: 0.84, blue: 0.15) : Color(red: 0.95, green: 0.28, blue: 0.22)
-
-        // Handle Goalkeeper horizontal dive & Defender sliding tackle offsets
-        var diveAngle: Double = 0
-        if player.animState == .divingLeft {
-            diveAngle = -1.05
-        } else if player.animState == .divingRight {
-            diveAngle = 1.05
-        } else if player.animState == .divingHigh {
-            diveAngle = (player.position.x < engine.ball.position.x) ? 0.72 : -0.72
-        } else if player.animState == .sliding {
-            diveAngle = (dirX >= 0) ? -0.62 : 0.62
-        }
+        let outlineColor = Color.black.opacity(0.55)
 
         let isMoving = (player.animState == .running || player.animState == .sprinting)
         let isSprinting = (player.animState == .sprinting)
         let phase = player.animPhase
 
-        // Vertical running bounce (twice per stride cycle) & forward sprint lean
-        let runBounce = isMoving ? abs(sin(phase)) * (isSprinting ? 2.6 : 1.7) * scale : 0.0
-        let sprintLeanX = isMoving ? dirX * (isSprinting ? 4.2 : 2.4) * scale : 0.0
-        let slideDropY = (player.animState == .sliding) ? 7.5 * scale : 0.0
-        let disappointedSlouchY = (player.animState == .disappointed) ? 2.2 * scale : 0.0
+        // Whole-body tilt for goalkeeper dives, sliding tackles, and dynamic sprint lean
+        var bodyTilt: Double = 0.0
+        if player.animState == .divingLeft {
+            bodyTilt = -0.88
+        } else if player.animState == .divingRight {
+            bodyTilt = 0.88
+        } else if player.animState == .divingHigh {
+            bodyTilt = (player.position.x < engine.ball.position.x) ? 0.68 : -0.68
+        } else if player.animState == .sliding {
+            bodyTilt = (dirX >= 0) ? -0.52 : 0.52
+        } else if isMoving {
+            bodyTilt = dirX * (isSprinting ? 0.12 : 0.07)
+        }
 
-        let baseCx = Double(bodyBaseScreen.x) + sin(diveAngle) * 12.5 * scale
-        let footY = Double(bodyBaseScreen.y)
-        let hipX = baseCx + sprintLeanX * 0.45
-        let hipY = footY - 14.5 * scale - runBounce + slideDropY
+        let runBounce = isMoving ? abs(sin(phase)) * (isSprinting ? 2.2 : 1.4) * scale : 0.0
+        let slideDropY = (player.animState == .sliding) ? 5.5 * scale : 0.0
+        let pivotX = Double(bodyBaseScreen.x)
+        let pivotY = Double(bodyBaseScreen.y) - runBounce + slideDropY
+        let cosT = cos(bodyTilt)
+        let sinT = sin(bodyTilt)
 
-        // 2. Articulated 2-Segment Legs (Hip -> Knee -> Ankle/Boot)
-        let hipSpread = 3.8 * scale
-        let leftHip = CGPoint(x: hipX - hipSpread, y: hipY)
-        let rightHip = CGPoint(x: hipX + hipSpread, y: hipY)
+        // Rotates local body coordinates (dx, dy where dy <= 0 is upward from feet) around (pivotX, pivotY)
+        func bodyPt(_ dx: Double, _ dy: Double) -> CGPoint {
+            let rx = dx * cosT - dy * sinT
+            let ry = dx * sinT + dy * cosT
+            return CGPoint(x: pivotX + rx, y: pivotY + ry)
+        }
 
-        // Biomechanical leg helper
-        func computeLegJoints(isRight: Bool) -> (knee: CGPoint, ankle: CGPoint) {
-            let hipPt = isRight ? rightHip : leftHip
-            let hx = Double(hipPt.x)
-            let hy = Double(hipPt.y)
+        // 2. Proportionate Footballer Legs (Shorts Thigh -> Knee -> Team Sock/Stutzen -> Boot)
+        let hipY: Double = -15.0 * scale
+        let hipSpread: Double = 2.9 * scale
+
+        func computeLegLocal(isRight: Bool) -> (hip: (Double, Double), knee: (Double, Double), ankle: (Double, Double)) {
+            let sideSign = isRight ? 1.0 : -1.0
+            let hx = sideSign * hipSpread
+            let hy = hipY
 
             if player.animState == .sliding {
-                // Sliding tackle: one leg extended far forward along tackle direction, other leg tucked
                 let slideDir = (dirX >= 0) ? 1.0 : -1.0
                 if isRight {
-                    let kx = hx + slideDir * 7.5 * scale
-                    let ky = hy + 3.5 * scale
-                    let ax = hx + slideDir * 15.5 * scale
-                    let ay = footY - 1.0 * scale
-                    return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                    return ((hx, hy), (hx + slideDir * 5.0 * scale, hy + 5.5 * scale), (hx + slideDir * 10.5 * scale, -1.5 * scale))
                 } else {
-                    let kx = hx - slideDir * 3.5 * scale
-                    let ky = hy + 5.0 * scale
-                    let ax = hx - slideDir * 7.5 * scale
-                    let ay = footY - 1.5 * scale
-                    return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                    return ((hx, hy), (hx - slideDir * 2.0 * scale, hy + 6.5 * scale), (hx - slideDir * 4.5 * scale, -1.0 * scale))
                 }
             }
 
             if player.animState == .kicking && isRight {
-                let kx = hx + dirX * 5.0 * scale + 2.0 * scale
-                let ky = hy + 3.5 * scale
-                let ax = hx + dirX * 10.5 * scale + 3.5 * scale
-                let ay = hy + 5.5 * scale
-                return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                return ((hx, hy), (hx + dirX * 3.8 * scale + 1.4 * scale, hy + 5.5 * scale), (hx + dirX * 7.8 * scale + 2.8 * scale, hy + 9.2 * scale))
             } else if player.animState == .windingUp && isRight {
-                let kx = hx - dirX * 3.0 * scale + 1.5 * scale
-                let ky = hy + 6.5 * scale
-                let ax = hx - dirX * 5.5 * scale + 2.5 * scale
-                let ay = hy + 4.5 * scale
-                return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                return ((hx, hy), (hx - dirX * 2.2 * scale + 0.8 * scale, hy + 7.2 * scale), (hx - dirX * 4.2 * scale + 1.5 * scale, hy + 11.2 * scale))
             }
 
             if isMoving {
                 let legPhase = isRight ? (phase + .pi) : phase
-                let swing = sin(legPhase) // -1 (back) to +1 (forward)
-                let kneeDrive = max(0.0, cos(legPhase)) // Knee lifts as leg swings forward
-                let heelKick = max(0.0, -sin(legPhase)) // Heel kicks up behind when pushing off
-                let strideAmp = (isSprinting ? 7.2 : 5.0) * scale
+                let swing = sin(legPhase)           // -1 (back) to +1 (forward)
+                let lift = max(0.0, cos(legPhase))  // 0 to +1 as foot lifts forward
+                let strideAmp = (isSprinting ? 4.8 : 3.4) * scale
 
-                // Lateral & depth projection of stride
-                let swingX = swing * dirX * strideAmp
-                let swingY = -swing * dirY * strideAmp * 0.58
-
-                let kx = hx + swingX * 0.55 + dirX * kneeDrive * 2.2 * scale
-                let ky = hy + 7.2 * scale + swingY * 0.45 - kneeDrive * 3.8 * scale
-                let ax = hx + swingX - dirX * heelKick * 2.8 * scale
-                let ay = footY - runBounce * 0.3 + swingY - kneeDrive * 2.4 * scale - heelKick * 5.2 * scale
-                return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                let footX = hx + swing * dirX * strideAmp
+                let footY = -1.2 * scale - swing * dirY * strideAmp * 0.36 - lift * 2.8 * scale
+                let kneeX = (hx + footX) * 0.5 + dirX * lift * 1.4 * scale
+                let kneeY = (hy + footY) * 0.48 - lift * 1.3 * scale
+                return ((hx, hy), (kneeX, kneeY), (footX, footY))
             } else {
-                // Athletic ready stance
-                let stanceShift = isRight ? 1.0 : -1.0
-                let kx = hx + stanceShift * 0.8 * scale
-                let ky = hy + 7.2 * scale
-                let ax = hx + stanceShift * 1.2 * scale
-                let ay = footY
-                return (CGPoint(x: kx, y: ky), CGPoint(x: ax, y: ay))
+                let kx = hx + sideSign * 0.4 * scale
+                let ky = hy * 0.52
+                let ax = hx + sideSign * 0.6 * scale
+                let ay = -1.2 * scale
+                return ((hx, hy), (kx, ky), (ax, ay))
             }
         }
 
-        let leftLegJoints = computeLegJoints(isRight: false)
-        let rightLegJoints = computeLegJoints(isRight: true)
-
-        func drawSingleLeg(hip: CGPoint, knee: CGPoint, ankle: CGPoint) {
-            // Upper thigh (Shorts leg + Skin knee)
-            var thigh = Path()
-            thigh.move(to: hip)
-            thigh.addLine(to: knee)
-            context.stroke(thigh, with: .color(skinColor), style: StrokeStyle(lineWidth: CGFloat(4.4 * scale), lineCap: .round))
-
-            // Lower leg (Team Sock / Stutzen)
-            var calf = Path()
-            calf.move(to: knee)
-            calf.addLine(to: ankle)
-            context.stroke(calf, with: .color(primaryColor), style: StrokeStyle(lineWidth: CGFloat(3.9 * scale), lineCap: .round))
-
-            // Sock top stripe just below knee
-            let sockTop = CGPoint(
-                x: Double(knee.x) * 0.78 + Double(ankle.x) * 0.22,
-                y: Double(knee.y) * 0.78 + Double(ankle.y) * 0.22
+        func drawSingleLeg(isRight: Bool) {
+            let joints = computeLegLocal(isRight: isRight)
+            let hipPt = bodyPt(joints.hip.0, joints.hip.1)
+            let kneePt = bodyPt(joints.knee.0, joints.knee.1)
+            let anklePt = bodyPt(joints.ankle.0, joints.ankle.1)
+            let shortsHemPt = CGPoint(
+                x: Double(hipPt.x) * 0.38 + Double(kneePt.x) * 0.62,
+                y: Double(hipPt.y) * 0.38 + Double(kneePt.y) * 0.62
             )
-            var sockBand = Path()
-            sockBand.move(to: knee)
-            sockBand.addLine(to: sockTop)
-            context.stroke(sockBand, with: .color(secondaryColor), style: StrokeStyle(lineWidth: CGFloat(4.1 * scale), lineCap: .round))
 
-            // Cleated Football Boot
-            let ax = Double(ankle.x)
-            let ay = Double(ankle.y)
-            let bootToeOffset = (abs(dirX) > 0.25 ? (dirX >= 0 ? 3.4 : -3.4) : 1.8) * scale
-            var bootPath = Path()
-            bootPath.move(to: CGPoint(x: ax - 1.8 * scale, y: ay))
-            bootPath.addLine(to: CGPoint(x: ax + bootToeOffset, y: ay + 0.6 * scale))
-            context.stroke(bootPath, with: .color(bootColor), style: StrokeStyle(lineWidth: CGFloat(3.4 * scale), lineCap: .round))
+            // Outer contour behind leg
+            var fullLeg = Path()
+            fullLeg.move(to: hipPt)
+            fullLeg.addLine(to: kneePt)
+            fullLeg.addLine(to: anklePt)
+            context.stroke(fullLeg, with: .color(outlineColor), style: StrokeStyle(lineWidth: CGFloat(5.2 * scale), lineCap: .round, lineJoin: .round))
+
+            // Skin knee segment
+            var skinSeg = Path()
+            skinSeg.move(to: hipPt)
+            skinSeg.addLine(to: kneePt)
+            context.stroke(skinSeg, with: .color(skinColor), style: StrokeStyle(lineWidth: CGFloat(4.0 * scale), lineCap: .round))
+
+            // Team Sock (Stutzen) from knee to ankle
+            var sockSeg = Path()
+            sockSeg.move(to: kneePt)
+            sockSeg.addLine(to: anklePt)
+            context.stroke(sockSeg, with: .color(primaryColor), style: StrokeStyle(lineWidth: CGFloat(3.8 * scale), lineCap: .round))
+
+            // Contrasting sock cuff stripe just below knee
+            let sockBandEnd = CGPoint(
+                x: Double(kneePt.x) * 0.75 + Double(anklePt.x) * 0.25,
+                y: Double(kneePt.y) * 0.75 + Double(anklePt.y) * 0.25
+            )
+            var sockCuff = Path()
+            sockCuff.move(to: kneePt)
+            sockCuff.addLine(to: sockBandEnd)
+            context.stroke(sockCuff, with: .color(secondaryColor), style: StrokeStyle(lineWidth: CGFloat(3.9 * scale), lineCap: .round))
+
+            // Shorts thigh tube moving with upper leg
+            var shortsLeg = Path()
+            shortsLeg.move(to: hipPt)
+            shortsLeg.addLine(to: shortsHemPt)
+            context.stroke(shortsLeg, with: .color(outlineColor), style: StrokeStyle(lineWidth: CGFloat(6.4 * scale), lineCap: .round))
+            context.stroke(shortsLeg, with: .color(shortsColor), style: StrokeStyle(lineWidth: CGFloat(5.2 * scale), lineCap: .round))
+
+            // Proportionate Oval Football Boot at ankle
+            let bootW = 5.0 * scale
+            let bootH = 3.2 * scale
+            let toeShiftX = dirX * 1.3 * scale
+            let bx = Double(anklePt.x) + toeShiftX
+            let by = Double(anklePt.y)
+            let bootRect = CGRect(x: bx - bootW * 0.5, y: by - bootH * 0.5, width: bootW, height: bootH)
+            context.fill(Path(ellipseIn: bootRect.insetBy(dx: CGFloat(-0.6 * scale), dy: CGFloat(-0.6 * scale))), with: .color(outlineColor))
+            context.fill(Path(ellipseIn: bootRect), with: .color(bootColor))
         }
 
-        // Draw back leg first based on facing direction
+        // Draw further leg first based on horizontal movement direction
         if dirX >= 0 {
-            drawSingleLeg(hip: leftHip, knee: leftLegJoints.knee, ankle: leftLegJoints.ankle)
-            drawSingleLeg(hip: rightHip, knee: rightLegJoints.knee, ankle: rightLegJoints.ankle)
+            drawSingleLeg(isRight: false)
+            drawSingleLeg(isRight: true)
         } else {
-            drawSingleLeg(hip: rightHip, knee: rightLegJoints.knee, ankle: rightLegJoints.ankle)
-            drawSingleLeg(hip: leftHip, knee: leftLegJoints.knee, ankle: leftLegJoints.ankle)
+            drawSingleLeg(isRight: true)
+            drawSingleLeg(isRight: false)
         }
 
-        // 3. Athletic Shorts with Side Trim
-        let shortsW = 14.8 * scale
-        let shortsH = 7.8 * scale
-        let shortsRect = CGRect(x: hipX - shortsW * 0.5, y: hipY - 3.6 * scale, width: shortsW, height: shortsH)
-        let shortsPath = Path(roundedRect: shortsRect, cornerRadius: CGFloat(2.8 * scale))
-        context.fill(shortsPath, with: .color(shortsColor))
-        // Side trim stripes on shorts
-        let trimRectL = CGRect(x: hipX - shortsW * 0.48, y: hipY - 3.0 * scale, width: 1.8 * scale, height: shortsH - 1.2 * scale)
-        let trimRectR = CGRect(x: hipX + shortsW * 0.48 - 1.8 * scale, y: hipY - 3.0 * scale, width: 1.8 * scale, height: shortsH - 1.2 * scale)
-        context.fill(Path(trimRectL), with: .color(secondaryColor.opacity(0.85)))
-        context.fill(Path(trimRectR), with: .color(secondaryColor.opacity(0.85)))
+        // 3. Shorts Pelvis Block connecting the two shorts legs cleanly
+        var pelvisPath = Path()
+        pelvisPath.move(to: bodyPt(-5.4 * scale, hipY - 3.6 * scale))
+        pelvisPath.addLine(to: bodyPt(5.4 * scale, hipY - 3.6 * scale))
+        pelvisPath.addLine(to: bodyPt(5.8 * scale, hipY + 2.4 * scale))
+        pelvisPath.addLine(to: bodyPt(-5.8 * scale, hipY + 2.4 * scale))
+        pelvisPath.closeSubpath()
+        context.fill(pelvisPath, with: .color(shortsColor))
+        context.stroke(pelvisPath, with: .color(outlineColor), lineWidth: CGFloat(1.0 * scale))
 
-        // 4. Sculpted Athletic V-Tapered Torso & Jersey
-        let shoulderW = 17.8 * scale
-        let waistW = 13.6 * scale
-        let torsoH = 16.5 * scale
-        let shoulderCx = hipX + sprintLeanX * 0.55
-        let shoulderY = hipY - torsoH + disappointedSlouchY
-        let waistY = hipY - 1.0 * scale
+        // 4. Arm Helper (drawn with proper depth ordering around torso)
+        let shoulderY: Double = -29.2 * scale + (player.animState == .disappointed ? 1.8 * scale : 0.0)
+        let shoulderHalfW: Double = 6.5 * scale
+
+        func drawSingleArm(isRight: Bool) {
+            let sideSign = isRight ? 1.0 : -1.0
+            let sx = sideSign * (shoulderHalfW - 0.4 * scale)
+            let sy = shoulderY + 2.2 * scale
+
+            let ex: Double
+            let ey: Double
+            let hx: Double
+            let hy: Double
+
+            if player.animState == .celebrating || player.animState == .divingHigh || player.animState == .divingLeft || player.animState == .divingRight {
+                // Arms raised in celebration or full goalkeeper dive stretch
+                ex = sx + sideSign * 3.2 * scale
+                ey = sy - 4.5 * scale
+                hx = sx + sideSign * 5.2 * scale
+                hy = sy - 9.8 * scale
+            } else if player.animState == .disappointed {
+                // Slumped dejected posture at sides
+                ex = sx + sideSign * 2.2 * scale
+                ey = sy + 4.8 * scale
+                hx = sx + sideSign * 1.6 * scale
+                hy = sy + 9.2 * scale
+            } else if isMoving {
+                let armPhase = isRight ? phase : (phase + .pi)
+                let swing = sin(armPhase)
+                let amp = (isSprinting ? 3.8 : 2.6) * scale
+                ex = sx + sideSign * 2.0 * scale - swing * dirX * amp * 0.45
+                ey = sy + 4.6 * scale + swing * 1.8 * scale
+                hx = ex + sideSign * 0.5 * scale + swing * dirX * amp * 0.65
+                hy = ey + 2.4 * scale - max(0.0, swing) * 3.2 * scale
+            } else {
+                ex = sx + sideSign * 2.1 * scale
+                ey = sy + 4.8 * scale
+                hx = sx + sideSign * 2.4 * scale
+                hy = sy + 8.8 * scale
+            }
+
+            let shPt = bodyPt(sx, sy)
+            let elPt = bodyPt(ex, ey)
+            let haPt = bodyPt(hx, hy)
+            let sleevePt = bodyPt(sx * 0.42 + ex * 0.58, sy * 0.42 + ey * 0.58)
+
+            // Forearm outline & skin
+            var armPath = Path()
+            armPath.move(to: sleevePt)
+            armPath.addLine(to: elPt)
+            armPath.addLine(to: haPt)
+            context.stroke(armPath, with: .color(outlineColor), style: StrokeStyle(lineWidth: CGFloat(4.3 * scale), lineCap: .round, lineJoin: .round))
+            context.stroke(armPath, with: .color(skinColor), style: StrokeStyle(lineWidth: CGFloat(3.1 * scale), lineCap: .round, lineJoin: .round))
+
+            // Jersey Short Sleeve
+            var sleevePath = Path()
+            sleevePath.move(to: shPt)
+            sleevePath.addLine(to: sleevePt)
+            context.stroke(sleevePath, with: .color(outlineColor), style: StrokeStyle(lineWidth: CGFloat(5.8 * scale), lineCap: .round))
+            context.stroke(sleevePath, with: .color(primaryColor), style: StrokeStyle(lineWidth: CGFloat(4.6 * scale), lineCap: .round))
+
+            // Hand or Goalkeeper Glove
+            let handR = (player.role == .goalkeeper ? 2.7 : 1.75) * scale
+            let handColor: Color = (player.role == .goalkeeper) ? .white : skinColor
+            let hRect = CGRect(x: Double(haPt.x) - handR, y: Double(haPt.y) - handR, width: handR * 2, height: handR * 2)
+            context.fill(Path(ellipseIn: hRect.insetBy(dx: CGFloat(-0.5 * scale), dy: CGFloat(-0.5 * scale))), with: .color(outlineColor))
+            context.fill(Path(ellipseIn: hRect), with: .color(handColor))
+        }
+
+        // Draw back arm behind torso when angled sideways
+        if dirX >= 0 {
+            drawSingleArm(isRight: false)
+        } else {
+            drawSingleArm(isRight: true)
+        }
+
+        // 5. Proportionate Athletic Jersey Torso
+        let waistHalfW: Double = 5.2 * scale
+        let waistY: Double = hipY - 2.2 * scale
 
         var torsoPath = Path()
-        torsoPath.move(to: CGPoint(x: shoulderCx - shoulderW * 0.5, y: shoulderY + 2.2 * scale))
+        torsoPath.move(to: bodyPt(-shoulderHalfW, shoulderY + 2.0 * scale))
         torsoPath.addQuadCurve(
-            to: CGPoint(x: shoulderCx + shoulderW * 0.5, y: shoulderY + 2.2 * scale),
-            control: CGPoint(x: shoulderCx, y: shoulderY - 1.2 * scale)
+            to: bodyPt(shoulderHalfW, shoulderY + 2.0 * scale),
+            control: bodyPt(0, shoulderY - 1.0 * scale)
         )
-        torsoPath.addLine(to: CGPoint(x: hipX + waistW * 0.5, y: waistY))
-        torsoPath.addLine(to: CGPoint(x: hipX - waistW * 0.5, y: waistY))
+        torsoPath.addLine(to: bodyPt(waistHalfW, waistY))
+        torsoPath.addQuadCurve(
+            to: bodyPt(-waistHalfW, waistY),
+            control: bodyPt(0, waistY + 1.2 * scale)
+        )
         torsoPath.closeSubpath()
 
         context.fill(torsoPath, with: .color(primaryColor))
 
-        // Vertical Jersey Center Stripe & Collar
-        let stripeW = shoulderW * 0.22
+        // Vertical Jersey Accent Stripe
+        let stripeHalfW: Double = 1.6 * scale
         var stripePath = Path()
-        stripePath.move(to: CGPoint(x: shoulderCx - stripeW * 0.5, y: shoulderY + 1.0 * scale))
-        stripePath.addLine(to: CGPoint(x: shoulderCx + stripeW * 0.5, y: shoulderY + 1.0 * scale))
-        stripePath.addLine(to: CGPoint(x: hipX + stripeW * 0.45, y: waistY))
-        stripePath.addLine(to: CGPoint(x: hipX - stripeW * 0.45, y: waistY))
+        stripePath.move(to: bodyPt(-stripeHalfW, shoulderY + 0.6 * scale))
+        stripePath.addLine(to: bodyPt(stripeHalfW, shoulderY + 0.6 * scale))
+        stripePath.addLine(to: bodyPt(stripeHalfW * 0.85, waistY))
+        stripePath.addLine(to: bodyPt(-stripeHalfW * 0.85, waistY))
         stripePath.closeSubpath()
-        context.fill(stripePath, with: .color(secondaryColor.opacity(0.88)))
+        context.fill(stripePath, with: .color(secondaryColor.opacity(0.85)))
 
-        // Jersey Collar rim
-        let collarRect = CGRect(x: shoulderCx - 3.8 * scale, y: shoulderY - 0.4 * scale, width: 7.6 * scale, height: 3.0 * scale)
-        context.stroke(Path(ellipseIn: collarRect), with: .color(secondaryColor), lineWidth: CGFloat(1.6 * scale))
-        context.stroke(torsoPath, with: .color(.black.opacity(0.38)), lineWidth: 1.0)
+        // Subtle 3D shading on right half of torso
+        var shadePath = Path()
+        shadePath.move(to: bodyPt(0, shoulderY - 0.2 * scale))
+        shadePath.addLine(to: bodyPt(shoulderHalfW, shoulderY + 2.0 * scale))
+        shadePath.addLine(to: bodyPt(waistHalfW, waistY))
+        shadePath.addLine(to: bodyPt(0, waistY + 0.5 * scale))
+        shadePath.closeSubpath()
+        context.fill(shadePath, with: .color(.black.opacity(0.12)))
 
-        // 5. Squad Number (Large on back when facing goal, small chest badge when facing camera)
-        let numFontSize = facingCamera ? max(6.5, 7.8 * scale) : max(8.5, 10.4 * scale)
-        let numY = facingCamera ? (shoulderY + torsoH * 0.42) : (shoulderY + torsoH * 0.50)
+        // Jersey Collar
+        var collarPath = Path()
+        collarPath.move(to: bodyPt(-2.8 * scale, shoulderY + 0.2 * scale))
+        collarPath.addQuadCurve(
+            to: bodyPt(2.8 * scale, shoulderY + 0.2 * scale),
+            control: bodyPt(0, shoulderY + 2.4 * scale)
+        )
+        context.stroke(collarPath, with: .color(secondaryColor), style: StrokeStyle(lineWidth: CGFloat(1.6 * scale), lineCap: .round))
+        context.stroke(torsoPath, with: .color(outlineColor), lineWidth: CGFloat(1.1 * scale))
+
+        // Squad Number
+        let numFontSize = facingCamera ? max(6.0, 7.2 * scale) : max(8.0, 9.5 * scale)
+        let numPt = bodyPt(0, (shoulderY + waistY) * 0.5 + 0.6 * scale)
+        let numShadow = Text("\(player.shirtNumber)")
+            .font(.system(size: CGFloat(numFontSize), weight: .black, design: .rounded))
+            .foregroundColor(.black.opacity(0.65))
+        context.draw(numShadow, at: CGPoint(x: numPt.x + 0.6, y: numPt.y + 0.8))
         let numText = Text("\(player.shirtNumber)")
             .font(.system(size: CGFloat(numFontSize), weight: .black, design: .rounded))
             .foregroundColor(.white)
-        context.draw(numText, at: CGPoint(x: (shoulderCx + hipX) * 0.5, y: numY))
+        context.draw(numText, at: numPt)
 
-        // 6. Articulated 2-Segment Arms (Shoulder -> Elbow -> Hand/Glove) with Jersey Sleeves
-        let leftShoulder = CGPoint(x: shoulderCx - shoulderW * 0.48, y: shoulderY + 2.8 * scale)
-        let rightShoulder = CGPoint(x: shoulderCx + shoulderW * 0.48, y: shoulderY + 2.8 * scale)
-
-        let headR = 6.2 * scale
-        let headCx = shoulderCx + sprintLeanX * 0.25
-        let headCy = shoulderY - headR * 0.92 + disappointedSlouchY * 0.6
-
-        func drawSingleArm(isRight: Bool) {
-            let sh = isRight ? rightShoulder : leftShoulder
-            let sx = Double(sh.x)
-            let sy = Double(sh.y)
-            let sideSign = isRight ? 1.0 : -1.0
-
-            let elbow: CGPoint
-            let hand: CGPoint
-
-            if player.animState == .celebrating || player.animState == .divingHigh || player.animState == .divingLeft || player.animState == .divingRight {
-                // Arms raised high in celebration or full-stretch goalkeeper dive
-                elbow = CGPoint(x: sx + sideSign * 4.2 * scale, y: sy - 5.5 * scale)
-                hand = CGPoint(x: sx + sideSign * 7.2 * scale, y: sy - 12.2 * scale)
-            } else if player.animState == .disappointed {
-                // Disappointed: Both hands raised onto the top of the head in disbelief!
-                elbow = CGPoint(x: sx + sideSign * 5.2 * scale, y: sy - 4.0 * scale)
-                hand = CGPoint(x: headCx + sideSign * 2.8 * scale, y: headCy - headR * 0.65)
-            } else if isMoving {
-                // Counter-swinging sprinter arms with bent elbows (~85 degrees)
-                let armPhase = isRight ? phase : (phase + .pi)
-                let armSwing = sin(armPhase)
-                let amp = (isSprinting ? 5.5 : 3.8) * scale
-                let ex = sx + sideSign * 2.2 * scale - armSwing * dirX * amp * 0.55
-                let ey = sy + 5.8 * scale + armSwing * 2.6 * scale
-                let hx = ex + sideSign * 0.6 * scale + armSwing * dirX * amp * 0.75
-                let hy = ey + 2.2 * scale - max(0.0, armSwing) * 4.6 * scale
-                elbow = CGPoint(x: ex, y: ey)
-                hand = CGPoint(x: hx, y: hy)
-            } else {
-                elbow = CGPoint(x: sx + sideSign * 2.4 * scale, y: sy + 5.8 * scale)
-                hand = CGPoint(x: sx + sideSign * 3.0 * scale, y: sy + 10.5 * scale)
-            }
-
-            // Jersey Short Sleeve (Shoulder -> halfway to Elbow)
-            let sleeveEnd = CGPoint(
-                x: (sx + Double(elbow.x)) * 0.55,
-                y: (sy + Double(elbow.y)) * 0.55
-            )
-            var sleevePath = Path()
-            sleevePath.move(to: sh)
-            sleevePath.addLine(to: sleeveEnd)
-            context.stroke(sleevePath, with: .color(primaryColor), style: StrokeStyle(lineWidth: CGFloat(4.4 * scale), lineCap: .round))
-
-            // Forearm (Skin)
-            var armPath = Path()
-            armPath.move(to: sleeveEnd)
-            armPath.addLine(to: elbow)
-            armPath.addLine(to: hand)
-            context.stroke(armPath, with: .color(skinColor), style: StrokeStyle(lineWidth: CGFloat(3.4 * scale), lineCap: .round, lineJoin: .round))
-
-            // Hand or Goalkeeper Glove
-            let handR = (player.role == .goalkeeper ? 3.0 : 1.9) * scale
-            let handColor: Color = (player.role == .goalkeeper) ? .white : skinColor
-            let handRect = CGRect(x: Double(hand.x) - handR, y: Double(hand.y) - handR, width: handR * 2, height: handR * 2)
-            context.fill(Path(ellipseIn: handRect), with: .color(handColor))
+        // Draw front arm in front of torso
+        if dirX >= 0 {
+            drawSingleArm(isRight: true)
+        } else {
+            drawSingleArm(isRight: false)
         }
 
-        drawSingleArm(isRight: false)
-        drawSingleArm(isRight: true)
+        // 6. Neck, Proportionate Head & Clean Bezier Hairstyle
+        let neckPt = bodyPt(0, shoulderY - 1.2 * scale)
+        let neckW = 3.8 * scale
+        let neckH = 3.6 * scale
+        let neckRect = CGRect(x: Double(neckPt.x) - neckW * 0.5, y: Double(neckPt.y) - neckH * 0.5, width: neckW, height: neckH)
+        context.fill(Path(roundedRect: neckRect, cornerRadius: CGFloat(1.4 * scale)), with: .color(skinColor))
 
-        // 7. Neck, Head, Face & Sculpted Hairstyle
-        let neckRect = CGRect(x: headCx - 2.2 * scale, y: shoulderY - 3.2 * scale, width: 4.4 * scale, height: 4.2 * scale)
-        context.fill(Path(roundedRect: neckRect, cornerRadius: CGFloat(1.5 * scale)), with: .color(skinColor))
-
-        let headCenter = CGPoint(x: headCx, y: headCy)
-        let headRect = CGRect(x: headCx - headR, y: headCy - headR, width: headR * 2, height: headR * 2)
+        let headRx = 4.9 * scale
+        let headRy = 5.4 * scale
+        let headCenter = bodyPt(0, shoulderY - headRy - 1.0 * scale)
+        let hcx = Double(headCenter.x)
+        let hcy = Double(headCenter.y)
+        let headRect = CGRect(x: hcx - headRx, y: hcy - headRy, width: headRx * 2.0, height: headRy * 2.0)
 
         // Ears
-        let earR = 1.6 * scale
-        context.fill(Path(ellipseIn: CGRect(x: headCx - headR - earR * 0.4, y: headCy - earR, width: earR * 2, height: earR * 2)), with: .color(skinColor))
-        context.fill(Path(ellipseIn: CGRect(x: headCx + headR - earR * 1.6, y: headCy - earR, width: earR * 2, height: earR * 2)), with: .color(skinColor))
+        let earR = 1.35 * scale
+        let leftEarRect = CGRect(x: hcx - headRx - earR * 0.45, y: hcy - earR * 0.6, width: earR * 2.0, height: earR * 2.0)
+        let rightEarRect = CGRect(x: hcx + headRx - earR * 1.55, y: hcy - earR * 0.6, width: earR * 2.0, height: earR * 2.0)
+        context.fill(Path(ellipseIn: leftEarRect), with: .color(skinColor))
+        context.fill(Path(ellipseIn: rightEarRect), with: .color(skinColor))
 
-        // Head Sphere
+        // Head Oval & Contour
         context.fill(Path(ellipseIn: headRect), with: .color(skinColor))
+        context.stroke(Path(ellipseIn: headRect), with: .color(outlineColor), lineWidth: CGFloat(1.0 * scale))
 
         if facingCamera {
-            // Facial features (eyes & brow) when player faces the camera
-            let eyeY = headCy + 0.4 * scale
-            let eyeSpread = 2.2 * scale
-            let eyeR = 0.85 * scale
-            context.fill(Path(ellipseIn: CGRect(x: headCx - eyeSpread - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)), with: .color(.black.opacity(0.8)))
-            context.fill(Path(ellipseIn: CGRect(x: headCx + eyeSpread - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)), with: .color(.black.opacity(0.8)))
+            // Eyes & Brows when facing camera
+            let eyeY = hcy + 0.5 * scale
+            let eyeSpread = 1.9 * scale
+            let eyeR = 0.72 * scale
+            context.fill(Path(ellipseIn: CGRect(x: hcx - eyeSpread - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)), with: .color(.black.opacity(0.82)))
+            context.fill(Path(ellipseIn: CGRect(x: hcx + eyeSpread - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)), with: .color(.black.opacity(0.82)))
 
-            // Top hair crown when facing camera
+            // Explicit Bezier Top Hair Crown (leaves face completely clear!)
             var hairFront = Path()
-            hairFront.addArc(center: headCenter, radius: CGFloat(headR * 1.04), startAngle: .degrees(190), endAngle: .degrees(350), clockwise: false)
+            hairFront.move(to: CGPoint(x: hcx - headRx * 0.96, y: hcy - headRy * 0.15))
+            hairFront.addQuadCurve(
+                to: CGPoint(x: hcx + headRx * 0.96, y: hcy - headRy * 0.15),
+                control: CGPoint(x: hcx, y: hcy - headRy * 1.38)
+            )
+            hairFront.addQuadCurve(
+                to: CGPoint(x: hcx - headRx * 0.96, y: hcy - headRy * 0.15),
+                control: CGPoint(x: hcx, y: hcy - headRy * 0.52)
+            )
             hairFront.closeSubpath()
             context.fill(hairFront, with: .color(hairColor))
         } else {
-            // Full back-of-head athletic haircut when facing toward the goal
+            // Explicit Bezier Athletic Back-of-Head Haircut (leaves neck & lower jawline visible)
             var hairBack = Path()
-            hairBack.addArc(center: headCenter, radius: CGFloat(headR * 1.04), startAngle: .degrees(155), endAngle: .degrees(25), clockwise: false)
+            hairBack.move(to: CGPoint(x: hcx - headRx * 1.01, y: hcy + headRy * 0.08))
+            hairBack.addCurve(
+                to: CGPoint(x: hcx + headRx * 1.01, y: hcy + headRy * 0.08),
+                control1: CGPoint(x: hcx - headRx * 0.95, y: hcy - headRy * 1.32),
+                control2: CGPoint(x: hcx + headRx * 0.95, y: hcy - headRy * 1.32)
+            )
+            hairBack.addQuadCurve(
+                to: CGPoint(x: hcx - headRx * 1.01, y: hcy + headRy * 0.08),
+                control: CGPoint(x: hcx, y: hcy + headRy * 0.52)
+            )
             hairBack.closeSubpath()
             context.fill(hairBack, with: .color(hairColor))
         }
 
-        // 8. Player Name / Tactical Callout Pill above head
+        // 7. Player Name / Tactical Callout Pill above head
         if engine.phase == .tacticalAiming && player.side == .home && !player.hasBall,
            let callout = player.passCalloutText {
             let isLocked = (engine.currentShotParams?.intendedReceiverId == player.id)
-            let pillY = headCy - headR - 11.0 * scale
+            let pillY = hcy - headRy - 10.5 * scale
             let pillW: Double = isLocked ? 54.0 : 44.0
             let pillH: Double = 15.0
-            let pillRect = CGRect(x: headCx - pillW * 0.5, y: pillY - pillH * 0.5, width: pillW, height: pillH)
+            let pillRect = CGRect(x: hcx - pillW * 0.5, y: pillY - pillH * 0.5, width: pillW, height: pillH)
             context.fill(Path(roundedRect: pillRect, cornerRadius: 7.5), with: .color(isLocked ? .yellow : Color.black.opacity(0.72)))
             let label = Text(isLocked ? "PASS!" : callout)
                 .font(.system(size: 8.5, weight: .heavy))
                 .foregroundColor(isLocked ? .black : .white)
-            context.draw(label, at: CGPoint(x: headCx, y: pillY))
+            context.draw(label, at: CGPoint(x: hcx, y: pillY))
         }
     }
 

@@ -258,17 +258,8 @@ final class PhysicsEngine: ObservableObject {
     private func computeFlickShotParameters(endPoint: CGPoint, predictedEnd: CGPoint, in size: CGSize) -> SwipeShotParameters? {
         guard let firstPoint = touchPoints.first else { return nil }
 
-        // Blend actual finger end with iOS flick velocity (predictedEnd) so quick flicks work effortlessly
-        let flickBoostX = Double(predictedEnd.x - endPoint.x) * 0.28
-        let flickBoostY = Double(predictedEnd.y - endPoint.y) * 0.28
-        let effectiveEndScreen = CGPoint(
-            x: Double(endPoint.x) + max(-90.0, min(90.0, flickBoostX)),
-            y: Double(endPoint.y) + max(-90.0, min(90.0, flickBoostY))
-        )
-
         let directScreenDrag = hypot(Double(endPoint.x - firstPoint.x), Double(endPoint.y - firstPoint.y))
-        let boostedScreenDrag = hypot(Double(effectiveEndScreen.x - firstPoint.x), Double(effectiveEndScreen.y - firstPoint.y))
-        guard max(directScreenDrag, boostedScreenDrag) >= 10.0 else {
+        guard directScreenDrag >= 10.0 else {
             return nil
         }
 
@@ -276,42 +267,41 @@ final class PhysicsEngine: ObservableObject {
         let screenSpeed = directScreenDrag / elapsed
         let predictedMomentum = hypot(Double(predictedEnd.x - endPoint.x), Double(predictedEnd.y - endPoint.y))
 
-        // Normalize flick power from swipe speed + swipe distance (fast flick = full power even on short thumb stroke!)
+        // Normalize flick power from swipe distance + swipe speed
         let speedFactor = max(0.0, min(1.0, (screenSpeed - 140.0) / 820.0))
         let distFactor = max(0.0, min(1.0, (directScreenDrag - 18.0) / 145.0))
         let momentumFactor = max(0.0, min(1.0, predictedMomentum / 160.0))
-        let powerNorm = max(0.22, min(1.0, max(speedFactor * 0.78 + distFactor * 0.35, max(distFactor, momentumFactor * 0.85))))
+        let powerNorm = max(0.24, min(1.0, max(speedFactor * 0.65 + distFactor * 0.45, max(distFactor, momentumFactor * 0.75))))
 
         let startPitch = ball.position.xy
-        let rawDelta = unprojectScreenDelta(from: firstPoint, to: effectiveEndScreen, in: size)
+        // Always use the exact endPoint of the drawn line so the shot matches the drawn line 1:1
+        let rawDelta = unprojectScreenDelta(from: firstPoint, to: endPoint, in: size)
         guard rawDelta.length() > 0.4 else { return nil }
 
-        // Measure finger swipe curvature (perpendicular bulge of mid-swipe points from straight chord)
-        var maxSignedLateralScreen: Double = 0.0
-        let chordX = Double(endPoint.x - firstPoint.x)
-        let chordY = Double(endPoint.y - firstPoint.y)
-        let chordLen = max(1.0, hypot(chordX, chordY))
-        let screenNx = -chordY / chordLen
-        let screenNy = chordX / chordLen
+        // Measure finger swipe curvature in pitch-space coordinates (+X right, +Y toward goal)
+        // strokeRightUnit points to the RIGHT of the chord (firstPoint -> endPoint)
+        let chordDir = rawDelta.normalized()
+        let strokeRightUnit = Vec2(x: chordDir.y, y: -chordDir.x)
 
+        var maxSignedRightMeters: Double = 0.0
         for pt in touchPoints {
-            let vx = Double(pt.x - firstPoint.x)
-            let vy = Double(pt.y - firstPoint.y)
-            let signedDist = vx * screenNx + vy * screenNy
-            if abs(signedDist) > abs(maxSignedLateralScreen) {
-                maxSignedLateralScreen = signedDist
+            let relPitch = unprojectScreenDelta(from: firstPoint, to: pt, in: size)
+            let rightDist = relPitch.dot(strokeRightUnit)
+            if abs(rightDist) > abs(maxSignedRightMeters) {
+                maxSignedRightMeters = rightDist
             }
         }
 
-        // Responsive curve sensitivity for quick curved swipes
-        let rawCurveNorm = max(-1.0, min(1.0, maxSignedLateralScreen / 38.0))
-        let spinZ = rawCurveNorm * 10.2
+        // Bulge ratio relative to the drawn line length
+        let drawnLengthMeters = max(3.5, rawDelta.length())
+        let bulgeRatio = max(-0.42, min(0.42, maxSignedRightMeters / drawnLengthMeters))
+        let rawCurveNorm = max(-1.0, min(1.0, bulgeRatio / 0.28))
 
-        let swipeDir = rawDelta.normalized()
+        let swipeDir = chordDir
 
         // 1. Check if the swipe points toward an open teammate (or their forward run waypoint)
         var lockedTeammateId: String? = nil
-        var bestTeammateScore: Double = 0.84 // Minimum cosine similarity (~32° cone)
+        var bestTeammateScore: Double = 0.85 // Minimum cosine similarity (~31° cone)
         var teammateTargetPos: Vec2 = startPitch
 
         for mate in players where mate.side == .home && !mate.hasBall {
@@ -329,17 +319,21 @@ final class PhysicsEngine: ObservableObject {
             }
         }
 
-        // 2. Ray-project forward swipes to the Goal Line (y = 52.0) so you never have to drag all the way up the screen!
+        // 2. Ray-project forward swipes to the Goal Line (y = 52.0) or directly to where the drawn line ends
         var isGoalShot = false
         var finalTarget: Vec2
 
         let dyToGoal = max(2.0, PitchConstants.goalLineY - startPitch.y)
-        let projectedGoalX: Double
-        if swipeDir.y > 0.18 {
-            projectedGoalX = startPitch.x + (swipeDir.x / swipeDir.y) * dyToGoal
-        } else {
-            projectedGoalX = startPitch.x + swipeDir.x * 25.0
-        }
+        let goalCenterScreen = project(Vec3(x: 0, y: PitchConstants.goalLineY, z: 0), in: size)
+        let goalRightPostScreen = project(Vec3(x: PitchConstants.goalHalfWidth, y: PitchConstants.goalLineY, z: 0), in: size)
+        let pixelsPerGoalMeterX = max(4.0, Double(goalRightPostScreen.x - goalCenterScreen.x) / PitchConstants.goalHalfWidth)
+
+        // If the user draws the line all the way up near the goal on screen, map endPoint.x directly to the goal line
+        let directGoalX = Double(endPoint.x - goalCenterScreen.x) / pixelsPerGoalMeterX
+        let rayGoalX = swipeDir.y > 0.18 ? (startPitch.x + (swipeDir.x / swipeDir.y) * dyToGoal) : (startPitch.x + swipeDir.x * 25.0)
+        let distFromGoalScreenY = max(0.0, Double(endPoint.y - goalCenterScreen.y))
+        let directWeight = max(0.0, min(1.0, 1.0 - (distFromGoalScreenY - 25.0) / 120.0))
+        let projectedGoalX = directGoalX * directWeight + rayGoalX * (1.0 - directWeight)
 
         let aimedAtGoalMouth = (swipeDir.y > 0.25 && abs(projectedGoalX) <= PitchConstants.goalHalfWidth + 6.5)
 
@@ -366,37 +360,59 @@ final class PhysicsEngine: ObservableObject {
         let effectiveSwipeVec = finalTarget - startPitch
         let effectiveDist = max(2.5, effectiveSwipeVec.length())
         let dirUnit = effectiveSwipeVec.normalized()
-        let perpUnit = Vec2(x: -dirUnit.y, y: dirUnit.x)
+        // rightUnit points to the RIGHT of the shot direction (+X when shooting toward the goal)
+        let rightUnit = Vec2(x: dirUnit.y, y: -dirUnit.x)
 
         // Calculate flight speed & height (loftZ) from swipe power
         let horizontalSpeed: Double
         let loftZ: Double
         if isGoalShot {
-            horizontalSpeed = 17.5 + powerNorm * 14.0
-            // Swipe speed/power controls shot height at the goal (clears walls and hits upper corners!)
-            let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.42, max(0.65, 0.55 + powerNorm * 3.45))
+            horizontalSpeed = 18.0 + powerNorm * 13.5
+            let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.38, max(0.65, 0.55 + powerNorm * 3.45))
             let estTime = max(0.32, effectiveDist / horizontalSpeed)
             let g = 14.8
             loftZ = max(2.0, min(9.6, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
         } else {
-            horizontalSpeed = 13.5 + powerNorm * 11.0
+            horizontalSpeed = 14.0 + powerNorm * 11.0
             loftZ = effectiveDist > 18.0 ? (2.0 + powerNorm * 2.5) : (0.35 + powerNorm * 0.95)
         }
 
-        // Compensate initial launch angle opposite to spinZ & wind so the ball curves along the swipe arc into finalTarget
         let estFlightTime = max(0.26, effectiveDist / horizontalSpeed)
-        let windAccelX = level.windSpeed * 0.85
-        let lateralSpinDeflection = -perpUnit * (spinZ * 0.42 * estFlightTime * estFlightTime)
-        let windDeflectionX = 0.5 * windAccelX * estFlightTime * estFlightTime
 
-        let dragCompensation = 1.0 + 0.14 * estFlightTime
-        let vx = ((effectiveSwipeVec.x - lateralSpinDeflection.x - windDeflectionX) / estFlightTime) * dragCompensation
-        let vy = ((effectiveSwipeVec.y - lateralSpinDeflection.y) / estFlightTime) * dragCompensation
+        // Scale the user's drawn bulge onto the full shot distance so the ball follows the exact curve of the drawn line!
+        // Positive desiredBulgeRightMeters = ball bulges to the RIGHT first, then curves LEFT into finalTarget (spinZ > 0)
+        // Negative desiredBulgeRightMeters = ball bulges to the LEFT first, then curves RIGHT into finalTarget (spinZ < 0)
+        let desiredBulgeRightMeters = max(-8.0, min(8.0, bulgeRatio * effectiveDist * 1.15))
+        let requiredMagnusAccel = (8.0 * desiredBulgeRightMeters) / max(0.12, estFlightTime * estFlightTime)
+        let speedScale = min(1.4, horizontalSpeed / 16.0)
+        let spinZ = max(-18.5, min(18.5, requiredMagnusAccel / max(0.6, 1.42 * speedScale)))
+
+        // Initial velocity offset so the ball launches along the drawn curve and bends back into finalTarget
+        let initialRightOffsetVel = (4.0 * desiredBulgeRightMeters) / estFlightTime
+        let dragCompensation = 1.0 + 0.13 * estFlightTime
+        var vx = ((effectiveSwipeVec.x / estFlightTime) + rightUnit.x * initialRightOffsetVel) * dragCompensation
+        var vy = ((effectiveSwipeVec.y / estFlightTime) + rightUnit.y * initialRightOffsetVel) * dragCompensation
+
+        // Two-pass exact trajectory solver so the curved 3D path always lands precisely on finalTarget
+        for _ in 0..<2 {
+            var simPos = ball.position
+            var simVel = Vec3(x: vx, y: vy, z: loftZ)
+            var simSpin = spinZ
+            let steps = 20
+            let stepDt = estFlightTime / Double(steps)
+            for _ in 0..<steps {
+                stepBallPhysics(pos: &simPos, vel: &simVel, spinZ: &simSpin, dt: stepDt, isPreview: true)
+            }
+            let errX = finalTarget.x - simPos.x
+            let errY = finalTarget.y - simPos.y
+            vx += (errX / estFlightTime) * 0.92
+            vy += (errY / estFlightTime) * 0.92
+        }
+
         let launchVel = Vec3(x: vx, y: vy, z: loftZ)
-
         let loftNorm = max(0.0, min(1.0, loftZ / 9.2))
-        let controlMid = (startPitch + finalTarget) * 0.5 - perpUnit * (rawCurveNorm * effectiveDist * 0.28)
-        let preview = simulatePreviewPoints(startPos: ball.position, launchVel: launchVel, spinZ: spinZ, maxTime: min(1.45, estFlightTime * 1.12))
+        let controlMid = (startPitch + finalTarget) * 0.5 + rightUnit * desiredBulgeRightMeters
+        let preview = simulatePreviewPoints(startPos: ball.position, launchVel: launchVel, spinZ: spinZ, maxTime: min(1.45, estFlightTime * 1.08))
 
         if let idx = players.firstIndex(where: { $0.hasBall }) {
             players[idx].facingAngle = atan2(vx, max(0.1, vy))
@@ -755,7 +771,7 @@ final class PhysicsEngine: ObservableObject {
         if speedXY > 0.5 {
             let nx = -vel.y / speedXY
             let ny = vel.x / speedXY
-            let magnusFactor = 0.84 * spinZ * min(1.3, speedXY / 18.0)
+            let magnusFactor = 1.42 * spinZ * min(1.4, speedXY / 16.0)
             magnusAx = nx * magnusFactor
             magnusAy = ny * magnusFactor
         }
@@ -1062,10 +1078,10 @@ final class PhysicsEngine: ObservableObject {
             players[i].zHeight = 0
         }
 
-        // Tight physical collision: ball must actually hit the wall defender's body/head!
+        // Balanced physical collision: slightly smaller than original (0.78 -> 0.68), larger than 0.54
         let distXY = players[i].position.distance(to: ball.position.xy)
-        let defenderTopZ = 1.75 + players[i].zHeight * 0.85
-        if phase == .ballInFlight && pendingFailReason == nil && distXY < 0.54 && ball.position.z <= defenderTopZ {
+        let defenderTopZ = 1.80 + players[i].zHeight * 0.88
+        if phase == .ballInFlight && pendingFailReason == nil && distXY < 0.68 && ball.position.z <= defenderTopZ {
             ball.velocity.y = -abs(ball.velocity.y) * 0.48
             ball.velocity.x += Double.random(in: -5.5...5.5)
             ball.velocity.z = max(1.5, ball.velocity.z * 0.5)
@@ -1110,10 +1126,10 @@ final class PhysicsEngine: ObservableObject {
             players[i].animState = distToBall < 4.5 ? .sprinting : .running
         }
 
-        // Tight physical tackle hitbox: defender must genuinely touch the ball with his foot/body!
+        // Balanced physical tackle hitbox: slightly smaller than original (0.92 -> 0.78), larger than 0.56
         if phase == .ballInFlight && pendingFailReason == nil && flightDuration > 0.12 {
             let hitDist = players[i].position.distance(to: ball.position.xy)
-            if hitDist < 0.56 && ball.position.z < 1.45 {
+            if hitDist < 0.78 && ball.position.z < 1.58 {
                 players[i].animState = .sliding
                 players[i].stateTimer = 0.85
                 // Realistic deflection off the defender's sliding boot
@@ -1179,15 +1195,15 @@ final class PhysicsEngine: ObservableObject {
 
         players[i].facingAngle = .pi
 
-        // Tight physical Goalkeeper Save Collision: gloves/body must genuinely touch the ball!
+        // Balanced Goalkeeper Save Collision: slightly smaller than original (0.92/1.48 -> 0.82/1.30), larger than 0.68/1.08
         if phase == .ballInFlight && pendingFailReason == nil {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
             let isDiving = (players[i].animState == .divingLeft || players[i].animState == .divingRight || players[i].animState == .divingHigh)
-            let keeperReachX = isDiving ? 1.08 : 0.68
-            let keeperReachZ = 1.88 + players[i].zHeight
+            let keeperReachX = isDiving ? 1.30 : 0.82
+            let keeperReachZ = 2.02 + players[i].zHeight
 
-            if dy < 0.65 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 0.78 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5
