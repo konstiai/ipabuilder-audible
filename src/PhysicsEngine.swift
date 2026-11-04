@@ -1156,20 +1156,23 @@ final class PhysicsEngine: ObservableObject {
         let toTarget = target - players[i].position
         if toTarget.length() > 0.25 {
             let dir = toTarget.normalized()
-            let moveSpeed = players[i].baseSpeed * speedScale * 0.88
+            let moveSpeed = players[i].baseSpeed * speedScale * 0.94
             players[i].velocity = dir * moveSpeed
             players[i].position = players[i].position + players[i].velocity * dt
             players[i].facingAngle = atan2(dir.x, dir.y)
             players[i].animState = distToBall < 4.5 ? .sprinting : .running
         }
 
-        // Balanced physical tackle hitbox: defenders must actually touch the ball, reduced reach
-        if phase == .ballInFlight && pendingFailReason == nil && flightDuration > 0.14 {
+        // Real Solid Physical Body Collision: You cannot pass or shoot straight through any player!
+        if phase == .ballInFlight && pendingFailReason == nil && flightDuration > 0.08 {
             let hitDist = players[i].position.distance(to: ball.position.xy)
-            if hitDist < 0.62 && ball.position.z < 1.35 {
+            let bodyRadius = 0.72 // Solid body width (shoulders/torso/legs)
+            let bodyHeight = 1.68 // Player height
+
+            if hitDist < bodyRadius && ball.position.z < bodyHeight {
                 players[i].animState = .sliding
                 players[i].stateTimer = 0.85
-                // Realistic deflection off the defender's sliding boot
+                // Realistic deflection off the defender's body or leg
                 let deflectDir = (ball.position.xy - players[i].position).normalized()
                 ball.velocity = Vec3(
                     x: deflectDir.x * 7.5 + Double.random(in: -3...3),
@@ -1180,7 +1183,7 @@ final class PhysicsEngine: ObservableObject {
                 spawnKickParticles(at: ball.position, power: 0.75)
                 SoundManager.shared.play(.passKick)
                 SoundManager.shared.play(.crowdReaction)
-                triggerPlayFailed(reason: "Grätsche! Von \(players[i].name) (#\(players[i].shirtNumber)) fair geklärt!")
+                triggerPlayFailed(reason: "Geblockt! \(players[i].name) (#\(players[i].shirtNumber)) wirft sich in den Schuss!")
             }
         }
     }
@@ -1200,7 +1203,7 @@ final class PhysicsEngine: ObservableObject {
             let predictedZ = max(0.0, min(PitchConstants.crossbarHeight, ball.position.z + ball.velocity.z * timeToGoal - 0.5 * 14.8 * timeToGoal * timeToGoal))
 
             let dx = predictedX - players[i].position.x
-            let diveSpeed = players[i].baseSpeed * skillScale * 0.95
+            let diveSpeed = players[i].baseSpeed * skillScale * 1.08
             let stepX = max(-diveSpeed * dt, min(diveSpeed * dt, dx))
             players[i].position.x += stepX
             players[i].position.y = goalY
@@ -1232,14 +1235,27 @@ final class PhysicsEngine: ObservableObject {
 
         players[i].facingAngle = .pi
 
-        // Uniform Goalkeeper Save Zone: perfectly balanced and fair everywhere in the goal
-        if phase == .ballInFlight && pendingFailReason == nil {
+        // Check if ball crossed goal line inside goal mouth FIRST before keeper collision!
+        // If the shot is placed accurately into the corner pockets (e.g. within 2.2m of the post, or upper 90),
+        // it is an unsaveable precision strike!
+        let isPrecisionCornerShot: Bool
+        let postDist = PitchConstants.goalHalfWidth - abs(ball.position.x)
+        let crossbarDist = PitchConstants.crossbarHeight - ball.position.z
+        if (postDist <= 2.2 && ball.position.z >= 0.8) || (crossbarDist <= 1.4 && abs(ball.position.x) >= 2.8) || hitStarTargetInPlay {
+            isPrecisionCornerShot = true
+        } else {
+            isPrecisionCornerShot = false
+        }
+
+        // Natural Goalkeeper Physical Presence: You cannot shoot straight through him,
+        // but precise corner strikes are out of reach!
+        if phase == .ballInFlight && pendingFailReason == nil && !isPrecisionCornerShot {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let keeperReachX = 1.25
-            let keeperReachZ = 2.30
+            let keeperReachX = 1.65
+            let keeperReachZ = 2.85
 
-            if dy < 0.72 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 0.95 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5
