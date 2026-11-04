@@ -1199,22 +1199,22 @@ final class PhysicsEngine: ObservableObject {
             // Predict X and Z where ball will cross y = goalY
             let remainingY = max(0.05, goalY - ball.position.y)
             let timeToGoal = remainingY / max(4.0, ball.velocity.y)
-            let predictedX = max(-PitchConstants.goalHalfWidth + 0.5, min(PitchConstants.goalHalfWidth - 0.5, ball.position.x + ball.velocity.x * timeToGoal * 0.88))
+            let predictedX = max(-PitchConstants.goalHalfWidth + 0.5, min(PitchConstants.goalHalfWidth - 0.5, ball.position.x + ball.velocity.x * timeToGoal * 0.95))
             let predictedZ = max(0.0, min(PitchConstants.crossbarHeight, ball.position.z + ball.velocity.z * timeToGoal - 0.5 * 14.8 * timeToGoal * timeToGoal))
 
             let dx = predictedX - players[i].position.x
-            let diveSpeed = players[i].baseSpeed * skillScale * 1.08
+            let diveSpeed = players[i].baseSpeed * skillScale * 1.55
             let stepX = max(-diveSpeed * dt, min(diveSpeed * dt, dx))
             players[i].position.x += stepX
             players[i].position.y = goalY
 
-            if abs(dx) > 1.1 && timeToGoal < 0.55 {
-                if predictedZ > 2.6 {
+            if abs(dx) > 0.8 && timeToGoal < 0.65 {
+                if predictedZ > 2.2 {
                     players[i].animState = .divingHigh
-                    players[i].zHeight = min(1.75, players[i].zHeight + dt * 5.0)
+                    players[i].zHeight = min(2.1, players[i].zHeight + dt * 6.5)
                 } else {
                     players[i].animState = dx < 0 ? .divingLeft : .divingRight
-                    players[i].zHeight = min(0.90, players[i].zHeight + dt * 3.2)
+                    players[i].zHeight = min(1.2, players[i].zHeight + dt * 4.5)
                 }
             } else {
                 players[i].animState = .running
@@ -1235,27 +1235,22 @@ final class PhysicsEngine: ObservableObject {
 
         players[i].facingAngle = .pi
 
-        // Check if ball crossed goal line inside goal mouth FIRST before keeper collision!
-        // If the shot is placed accurately into the corner pockets (e.g. within 2.2m of the post, or upper 90),
-        // it is an unsaveable precision strike!
-        let isPrecisionCornerShot: Bool
+        // Check Kreuzeck (Top Corners): The goalkeeper holds EVERYTHING except shots exactly in the upper top corners!
+        // Top Left Corner: x <= -4.9 and z >= 3.2
+        // Top Right Corner: x >= 4.9 and z >= 3.2
         let postDist = PitchConstants.goalHalfWidth - abs(ball.position.x)
         let crossbarDist = PitchConstants.crossbarHeight - ball.position.z
-        if (postDist <= 2.2 && ball.position.z >= 0.8) || (crossbarDist <= 1.4 && abs(ball.position.x) >= 2.8) || hitStarTargetInPlay {
-            isPrecisionCornerShot = true
-        } else {
-            isPrecisionCornerShot = false
-        }
+        let isInKreuzeck = (postDist <= 2.5 && crossbarDist <= 1.6 && ball.position.z >= 3.2) || hitStarTargetInPlay
 
-        // Natural Goalkeeper Physical Presence: You cannot shoot straight through him,
-        // but precise corner strikes are out of reach!
-        if phase == .ballInFlight && pendingFailReason == nil && !isPrecisionCornerShot {
+        // If it's NOT in the Kreuzeck, the goalkeeper reaches and saves everything!
+        if phase == .ballInFlight && pendingFailReason == nil && !isInKreuzeck {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let keeperReachX = 1.65
-            let keeperReachZ = 2.85
+            // Wide coverage so he saves everywhere across the goal line (flach, halbhoch, Mitte, untere Ecken)
+            let keeperReachX = 3.6
+            let keeperReachZ = 4.2
 
-            if dy < 0.95 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 1.15 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5
