@@ -329,7 +329,7 @@ final class GameStore: ObservableObject {
     func isChapterUnlocked(_ chapter: CareerChapter) -> Bool {
         if sandboxUnlockAll { return true }
         if chapter.id == 1 { return true }
-        let firstLevelOfChapter = (chapter.id - 1) * 6 + 1
+        let firstLevelOfChapter = LevelDatabase.levels.first(where: { $0.chapterId == chapter.id })?.id ?? ((chapter.id - 1) * 6 + 1)
         return totalStars >= chapter.requiredStarsToUnlock || highestUnlockedLevel >= firstLevelOfChapter
     }
 

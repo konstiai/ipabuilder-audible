@@ -227,7 +227,7 @@ struct MainMenuView: View {
                     .font(.system(size: 28, weight: .black, design: .rounded))
                     .foregroundColor(.white)
 
-                Text("PRÄZISE WISCH-STEUERUNG • ECHTE BALLPHYSIK • 30 KARRIERE-LEVEL")
+                Text("PRÄZISE WISCH-STEUERUNG • ECHTE BALLPHYSIK • \(LevelDatabase.levels.count) KARRIERE-LEVEL")
                     .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundColor(.green)
                     .multilineTextAlignment(.center)
@@ -1184,7 +1184,7 @@ struct SettingsView: View {
                                 .foregroundColor(.white)
                                 .tint(.green)
 
-                            Toggle("Alle 30 Level freischalten (Sandbox-Modus)", isOn: $store.sandboxUnlockAll)
+                            Toggle("Alle Level freischalten (Sandbox-Modus)", isOn: $store.sandboxUnlockAll)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(.white)
                                 .tint(.orange)

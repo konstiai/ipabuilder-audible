@@ -4,7 +4,10 @@ enum LevelDatabase {
 
     // MARK: - 5 Career Chapters
 
-    static let chapters: [CareerChapter] = [
+    // Chapters 1-5 handcrafted + Chapters 6-20 from LevelGenerator.swift
+    static let chapters: [CareerChapter] = baseChapters + buildGeneratedChapters()
+
+    private static let baseChapters: [CareerChapter] = [
         CareerChapter(
             id: 1,
             title: "Kapitel 1: Jugend-Akademie",
@@ -74,7 +77,8 @@ enum LevelDatabase {
 
     // MARK: - All 30 Handcrafted Levels
 
-    static let levels: [LevelDefinition] = buildAllLevels()
+    // 30 handcrafted levels + 150 extended levels (Levels 31-180)
+    static let levels: [LevelDefinition] = buildAllLevels() + buildGeneratedLevels()
 
     static func level(for id: Int) -> LevelDefinition {
         levels.first(where: { $0.id == id }) ?? levels[0]
