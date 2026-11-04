@@ -1163,7 +1163,7 @@ final class PhysicsEngine: ObservableObject {
             let predictedZ = max(0.0, min(PitchConstants.crossbarHeight, ball.position.z + ball.velocity.z * timeToGoal - 0.5 * 14.8 * timeToGoal * timeToGoal))
 
             let dx = predictedX - players[i].position.x
-            let diveSpeed = players[i].baseSpeed * skillScale * 0.95
+            let diveSpeed = players[i].baseSpeed * skillScale * 1.15
             let stepX = max(-diveSpeed * dt, min(diveSpeed * dt, dx))
             players[i].position.x += stepX
             players[i].position.y = goalY
@@ -1200,10 +1200,10 @@ final class PhysicsEngine: ObservableObject {
         if phase == .ballInFlight && pendingFailReason == nil {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let keeperReachX = 1.05
-            let keeperReachZ = 2.45
+            let keeperReachX = 2.4
+            let keeperReachZ = 3.1
 
-            if dy < 0.78 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 1.0 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5
