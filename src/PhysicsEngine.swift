@@ -1163,7 +1163,7 @@ final class PhysicsEngine: ObservableObject {
             let predictedZ = max(0.0, min(PitchConstants.crossbarHeight, ball.position.z + ball.velocity.z * timeToGoal - 0.5 * 14.8 * timeToGoal * timeToGoal))
 
             let dx = predictedX - players[i].position.x
-            let diveSpeed = players[i].baseSpeed * skillScale * 1.15
+            let diveSpeed = players[i].baseSpeed * skillScale * 0.95
             let stepX = max(-diveSpeed * dt, min(diveSpeed * dt, dx))
             players[i].position.x += stepX
             players[i].position.y = goalY
@@ -1195,13 +1195,13 @@ final class PhysicsEngine: ObservableObject {
 
         players[i].facingAngle = .pi
 
-        // Balanced Goalkeeper Save Collision: slightly smaller than original (0.92/1.48 -> 0.82/1.30), larger than 0.68/1.08
+        // Uniform Goalkeeper Save Zone: the exact same hitbox size everywhere in the goal
+        // (center, sides and corners) - independent of dive state or dive height.
         if phase == .ballInFlight && pendingFailReason == nil {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let isDiving = (players[i].animState == .divingLeft || players[i].animState == .divingRight || players[i].animState == .divingHigh)
-            let keeperReachX = isDiving ? 1.30 : 0.82
-            let keeperReachZ = 2.02 + players[i].zHeight
+            let keeperReachX = 1.05
+            let keeperReachZ = 2.45
 
             if dy < 0.78 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
