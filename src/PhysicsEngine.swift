@@ -372,14 +372,28 @@ final class PhysicsEngine: ObservableObject {
         if isGoalShot {
             // Short line = gentle roller / chip (8.0 m/s), 100% full line = massive cannon rocket (38.5 m/s)
             horizontalSpeed = 8.0 + powerNorm * 30.5
-            let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.38, max(0.40, 0.30 + powerNorm * 3.70))
+            // Ball height only lifts if line is pulled with real power:
+            // Under 35% power = stays flat on the turf (0.0 to 0.4m), high power lifts into the corners!
+            let desiredGoalZ: Double
+            if powerNorm < 0.35 {
+                desiredGoalZ = 0.15 + (powerNorm / 0.35) * 0.45
+            } else {
+                let highFrac = (powerNorm - 0.35) / 0.65
+                desiredGoalZ = 0.60 + highFrac * 3.75
+            }
             let estTime = max(0.24, effectiveDist / horizontalSpeed)
             let g = 14.8
-            loftZ = max(1.2, min(10.5, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
+            loftZ = max(0.2, min(10.5, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
         } else {
             // Short pass (6.5 m/s) to hard driven pass (29.0 m/s)
             horizontalSpeed = 6.5 + powerNorm * 22.5
-            loftZ = effectiveDist > 18.0 ? (1.5 + powerNorm * 3.0) : (0.20 + powerNorm * 1.10)
+            // Passes stay flat on the ground! Only extremely long/powerful swipes (>75%) lift the ball as a chip/cross.
+            if powerNorm < 0.75 {
+                loftZ = 0.10 + powerNorm * 0.35 // Crisp ground pass directly to teammate's feet
+            } else {
+                let crossFrac = (powerNorm - 0.75) / 0.25
+                loftZ = 0.60 + crossFrac * 3.4 // High chip / cross
+            }
         }
 
         let estFlightTime = max(0.26, effectiveDist / horizontalSpeed)
@@ -1054,12 +1068,13 @@ final class PhysicsEngine: ObservableObject {
         }
 
         // Check if teammate can trap and control the pass!
+        // Generous vertical control window so teammates can trap ground passes as well as high chest/head balls
         if phase == .ballInFlight,
            pendingFailReason == nil,
            players[i].id != ball.lastKickerId,
-           flightDuration > 0.14,
-           ball.position.z < 2.25,
-           players[i].position.distance(to: ball.position.xy) < 1.62 {
+           flightDuration > 0.12,
+           ball.position.z < 2.95,
+           players[i].position.distance(to: ball.position.xy) < 2.25 {
 
             // Teammate successfully receives the pass!
             passesInCurrentPlay += 1
@@ -1141,17 +1156,17 @@ final class PhysicsEngine: ObservableObject {
         let toTarget = target - players[i].position
         if toTarget.length() > 0.25 {
             let dir = toTarget.normalized()
-            let moveSpeed = players[i].baseSpeed * speedScale
+            let moveSpeed = players[i].baseSpeed * speedScale * 0.88
             players[i].velocity = dir * moveSpeed
             players[i].position = players[i].position + players[i].velocity * dt
             players[i].facingAngle = atan2(dir.x, dir.y)
             players[i].animState = distToBall < 4.5 ? .sprinting : .running
         }
 
-        // Balanced physical tackle hitbox: slightly smaller than original (0.92 -> 0.78), larger than 0.56
-        if phase == .ballInFlight && pendingFailReason == nil && flightDuration > 0.12 {
+        // Balanced physical tackle hitbox: defenders must actually touch the ball, reduced reach
+        if phase == .ballInFlight && pendingFailReason == nil && flightDuration > 0.14 {
             let hitDist = players[i].position.distance(to: ball.position.xy)
-            if hitDist < 0.78 && ball.position.z < 1.58 {
+            if hitDist < 0.62 && ball.position.z < 1.35 {
                 players[i].animState = .sliding
                 players[i].stateTimer = 0.85
                 // Realistic deflection off the defender's sliding boot
@@ -1185,7 +1200,7 @@ final class PhysicsEngine: ObservableObject {
             let predictedZ = max(0.0, min(PitchConstants.crossbarHeight, ball.position.z + ball.velocity.z * timeToGoal - 0.5 * 14.8 * timeToGoal * timeToGoal))
 
             let dx = predictedX - players[i].position.x
-            let diveSpeed = players[i].baseSpeed * skillScale * 1.15
+            let diveSpeed = players[i].baseSpeed * skillScale * 0.95
             let stepX = max(-diveSpeed * dt, min(diveSpeed * dt, dx))
             players[i].position.x += stepX
             players[i].position.y = goalY
@@ -1221,10 +1236,10 @@ final class PhysicsEngine: ObservableObject {
         if phase == .ballInFlight && pendingFailReason == nil {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let keeperReachX = 1.65
-            let keeperReachZ = 2.65
+            let keeperReachX = 1.25
+            let keeperReachZ = 2.30
 
-            if dy < 0.85 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 0.72 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5

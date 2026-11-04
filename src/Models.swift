@@ -138,17 +138,17 @@ enum DifficultyLevel: String, CaseIterable, Codable, Identifiable {
 
     var defenderSpeedMultiplier: Double {
         switch self {
-        case .rookie: return 0.82
-        case .pro: return 1.0
-        case .legend: return 1.20
+        case .rookie: return 0.72
+        case .pro: return 0.88
+        case .legend: return 1.05
         }
     }
 
     var keeperReactionMultiplier: Double {
         switch self {
-        case .rookie: return 0.80
-        case .pro: return 1.0
-        case .legend: return 1.22
+        case .rookie: return 0.70
+        case .pro: return 0.86
+        case .legend: return 1.06
         }
     }
 
