@@ -77,8 +77,8 @@ enum LevelDatabase {
 
     // MARK: - All 30 Handcrafted Levels
 
-    // 30 handcrafted levels + 150 extended levels (Levels 31-180)
-    static let levels: [LevelDefinition] = buildAllLevels() + buildGeneratedLevels()
+    // 30 handcrafted levels + 150 extended levels + 20 secret levels (1 per chapter)
+    static let levels: [LevelDefinition] = buildAllLevels() + buildGeneratedLevels() + SecretLevelDatabase.buildAllSecretLevels()
 
     static func level(for id: Int) -> LevelDefinition {
         levels.first(where: { $0.id == id }) ?? levels[0]

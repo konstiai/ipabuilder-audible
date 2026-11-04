@@ -607,17 +607,25 @@ struct MatchPlayView: View {
 
                     Button {
                         sound.play(.menuClick)
-                        let nextId = engine.level.id + 1
-                        if nextId <= LevelDatabase.levels.count {
-                            let nextLvl = LevelDatabase.level(for: nextId)
-                            store.selectedChapterId = nextLvl.chapterId
-                            engine.loadLevel(nextLvl)
-                        } else {
+                        if engine.level.isSecret {
                             store.currentScreen = .careerHub
+                        } else {
+                            let regularLevels = LevelDatabase.levels(inChapter: engine.level.chapterId).filter { !$0.isSecret }
+                            if let currIdx = regularLevels.firstIndex(where: { $0.id == engine.level.id }), currIdx + 1 < regularLevels.count {
+                                let nextLvl = regularLevels[currIdx + 1]
+                                store.selectedChapterId = nextLvl.chapterId
+                                engine.loadLevel(nextLvl)
+                            } else if let nextChap = LevelDatabase.chapters.first(where: { $0.id == engine.level.chapterId + 1 }),
+                                      let firstLvl = LevelDatabase.levels(inChapter: nextChap.id).filter({ !$0.isSecret }).first {
+                                store.selectedChapterId = nextChap.id
+                                engine.loadLevel(firstLvl)
+                            } else {
+                                store.currentScreen = .careerHub
+                            }
                         }
                     } label: {
                         HStack(spacing: 6) {
-                            Text(engine.level.id < LevelDatabase.levels.count ? "NÄCHSTES LEVEL" : "WELTMEISTER-EHRUNG")
+                            Text(engine.level.isSecret ? "KAPITEL-ÜBERSICHT" : "NÄCHSTES LEVEL")
                             Image(systemName: "play.fill")
                         }
                         .font(.system(size: 14, weight: .black, design: .rounded))

@@ -463,8 +463,17 @@ struct LevelSelectView: View {
                 // Levels List for Selected Chapter
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 11) {
-                        ForEach(LevelDatabase.levels(inChapter: store.selectedChapterId)) { level in
+                        let chapterLevels = LevelDatabase.levels(inChapter: store.selectedChapterId)
+                        let regularLevels = chapterLevels.filter { !$0.isSecret }
+                        let secretLevels = chapterLevels.filter { $0.isSecret }
+
+                        ForEach(regularLevels) { level in
                             levelRowCard(level)
+                        }
+
+                        // Secret Level Card at the bottom of the chapter
+                        ForEach(secretLevels) { secretLevel in
+                            secretLevelRowCard(secretLevel)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -580,6 +589,127 @@ struct LevelSelectView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(unlocked ? Color.white.opacity(0.14) : Color.white.opacity(0.05), lineWidth: 1)
+            )
+        }
+    }
+
+    private func secretLevelRowCard(_ level: LevelDefinition) -> some View {
+        let unlocked = store.isLevelUnlocked(level.id)
+        let earnedStars = store.stars(for: level.id)
+        let progress = store.chapterRegularProgress(for: level.chapterId)
+
+        return Button {
+            guard unlocked else {
+                sound.play(.crowdReaction)
+                return
+            }
+            sound.play(.whistle, volumeScale: 0.65)
+            store.currentScreen = .matchPlay(levelId: level.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 14) {
+                    // Secret Badge
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(
+                                unlocked
+                                    ? LinearGradient(colors: [Color.purple, Color.pink], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                    : LinearGradient(colors: [Color.purple.opacity(0.25), Color.black.opacity(0.5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            .frame(width: 54, height: 54)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(unlocked ? Color.yellow.opacity(0.8) : Color.purple.opacity(0.4), lineWidth: 1.5)
+                            )
+
+                        if unlocked {
+                            VStack(spacing: 2) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 16, weight: .black))
+                                    .foregroundColor(.yellow)
+                                Text("SECRET")
+                                    .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                        } else {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(.purple.opacity(0.85))
+                        }
+                    }
+
+                    // Title & Description
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(level.title)
+                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .foregroundColor(unlocked ? .yellow : .white.opacity(0.75))
+                                .lineLimit(1)
+
+                            Text("SECRET")
+                                .font(.system(size: 8.5, weight: .black))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(unlocked ? Color.yellow : Color.purple.opacity(0.8))
+                                .cornerRadius(4)
+                        }
+
+                        if unlocked {
+                            Text(level.subtitle)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white.opacity(0.85))
+                                .lineLimit(2)
+                        } else {
+                            Text("🔒 Freischaltbar: Sammle in allen Spielen dieses Kapitels 3 Sterne! (\(progress.earned)/\(progress.total) ★)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.purple.opacity(0.95))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    Spacer()
+
+                    // Stars / Play
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if unlocked {
+                            HStack(spacing: 3) {
+                                ForEach(1...3, id: \.self) { s in
+                                    Image(systemName: s <= earnedStars ? "star.fill" : "star")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(s <= earnedStars ? .yellow : .white.opacity(0.22))
+                                }
+                            }
+                            Text("SPIELEN ▶")
+                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .foregroundColor(.yellow)
+                        } else {
+                            Text("\(progress.earned)/\(progress.total) ★")
+                                .font(.system(size: 11, weight: .black, design: .monospaced))
+                                .foregroundColor(.purple)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.purple.opacity(0.2))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .background(
+                unlocked
+                    ? LinearGradient(colors: [Color.purple.opacity(0.28), Color.pink.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    : LinearGradient(colors: [Color.purple.opacity(0.10), Color.black.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .cornerRadius(18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(
+                        unlocked
+                            ? Color.yellow.opacity(0.6)
+                            : Color.purple.opacity(0.4),
+                        lineWidth: unlocked ? 1.5 : 1
+                    )
             )
         }
     }

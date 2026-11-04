@@ -359,6 +359,7 @@ struct LevelDefinition: Identifiable, Codable {
     var ballStart: Vec2
     var players: [PlayerSpawn]
     var rewardCoins: Int
+    var isSecret: Bool = false
 }
 
 struct CareerChapter: Identifiable {

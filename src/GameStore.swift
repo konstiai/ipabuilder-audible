@@ -314,10 +314,29 @@ final class GameStore: ObservableObject {
         starsByLevel[levelId] ?? 0
     }
 
+    func isSecretLevelUnlocked(for chapterId: Int) -> Bool {
+        if sandboxUnlockAll { return true }
+        let regularLevels = LevelDatabase.levels(inChapter: chapterId).filter { !$0.isSecret }
+        guard !regularLevels.isEmpty else { return false }
+        return regularLevels.allSatisfy { (starsByLevel[$0.id] ?? 0) >= 3 }
+    }
+
+    func chapterRegularProgress(for chapterId: Int) -> (earned: Int, total: Int) {
+        let regularLevels = LevelDatabase.levels(inChapter: chapterId).filter { !$0.isSecret }
+        let earned = regularLevels.reduce(0) { $0 + (starsByLevel[$1.id] ?? 0) }
+        return (earned, regularLevels.count * 3)
+    }
+
     func isLevelUnlocked(_ levelId: Int) -> Bool {
         if sandboxUnlockAll { return true }
         if levelId <= 1 { return true }
         let level = LevelDatabase.level(for: levelId)
+
+        // Secret level rule: only unlocked when all regular levels in this chapter have 3 stars!
+        if level.isSecret {
+            return isSecretLevelUnlocked(for: level.chapterId)
+        }
+
         if let chapter = LevelDatabase.chapters.first(where: { $0.id == level.chapterId }) {
             if totalStars < chapter.requiredStarsToUnlock && levelId > highestUnlockedLevel {
                 return false
@@ -349,7 +368,7 @@ final class GameStore: ObservableObject {
             starsByLevel[levelId] = earnedStars
         }
 
-        if levelId >= highestUnlockedLevel && levelId < LevelDatabase.levels.count {
+        if levelId >= highestUnlockedLevel && levelId < LevelDatabase.levels.count && !level.isSecret {
             highestUnlockedLevel = levelId + 1
         }
 

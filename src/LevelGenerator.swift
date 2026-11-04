@@ -185,6 +185,7 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
     var rng = SeededRandom(seed: UInt64(id) &* 7919 &+ 17)
     let d = clampD(Double(id - 31) / 149.0, 0.0, 1.0)
     let isFinal = (n == 10)
+    let theme = SecretLevelDatabase.modifier(for: chapterId)
 
     let kinds: [ScenarioType] = [
         .finishing, .throughBall, .freeKick, .counterAttack, .finishing,
@@ -192,16 +193,16 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
     ]
     let kind = kinds[n - 1]
 
-    // Difficulty scaling
-    let defSpeed = 6.4 + 2.2 * d + (isFinal ? 0.3 : 0.0)
-    let defReact = max(0.07, 0.24 - 0.14 * d)
-    let gkSpeed = 6.0 + 2.6 * d + (isFinal ? 0.3 : 0.0)
-    let gkReact = max(0.07, 0.26 - 0.16 * d - (isFinal ? 0.02 : 0.0))
-    let windMagnitude = clampD((seed.windBase + d * 0.9) * rng.range(0.45, 1.0), 0.0, 2.8)
+    // Difficulty scaling: progressive per chapter, subtle and fair
+    let defSpeed = 6.4 + 2.0 * d + theme.defenderAggression * 1.5 + (isFinal ? 0.25 : 0.0)
+    let defReact = max(0.08, 0.24 - 0.12 * d - theme.defenderAggression * 0.08)
+    let gkSpeed = 6.0 + 2.2 * d + theme.keeperSkillBonus * 1.4 + (isFinal ? 0.25 : 0.0)
+    let gkReact = max(0.08, 0.26 - 0.14 * d - theme.keeperSkillBonus * 0.08 - (isFinal ? 0.02 : 0.0))
+    let windMagnitude = clampD((seed.windBase + theme.windBonus + d * 0.6) * rng.range(0.45, 1.0), 0.0, 2.8)
     let wind = rng.sign() * windMagnitude
     let starX = rng.sign() * rng.range(2.4, 5.5)
     let starZ = rng.range(2.5, 3.5)
-    let starRadius = max(1.1, 1.8 - 0.6 * d - (isFinal ? 0.1 : 0.0))
+    let starRadius = max(1.05, (1.8 - 0.5 * d - (isFinal ? 0.1 : 0.0)) * theme.starRadiusScale)
     let parAttempts = chapterId >= 13 ? 3 : 2
     let reward = 70 + Int(230.0 * d) + (isFinal ? 80 : 0)
 
@@ -214,7 +215,8 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
     var players: [PlayerSpawn] = []
     var defCount = 0
     var recommendedPasses = 0
-    var ballStart = Vec2(x: 0.0, y: 34.0)
+    // Chapter-specific ball start offset: Some chapters start further back (e.g. Ch 7 Weitschuss, Ch 18/20 Distanztore)
+    var ballStart = Vec2(x: 0.0, y: clampD(34.0 + theme.ballStartYOffset, 14.0, 38.0))
     var title = ""
     var subtitle = ""
     var hint = ""
@@ -297,7 +299,7 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
 
     case .finishing:
         let bx = rng.range(-11.0, 11.0)
-        let by = rng.range(31.0, 38.0)
+        let by = clampD(rng.range(31.0, 38.0) + theme.ballStartYOffset, 16.0, 39.0)
         ballStart = Vec2(x: bx, y: by)
         addHome(id: "h9", role: .ballCarrier, shirt: 9, pos: Vec2(x: bx, y: by - 0.7), wps: [], speedBonus: 0.0)
 
@@ -316,21 +318,21 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
             title = finishingTitles[titleIndex]
             subtitle = "Wische vom Ball in den goldenen Stern-Ring im \(starSideWord) Torwinkel!"
         }
-        hint = "Wische vom Ball in Richtung des Stern-Rings am \(starSideWord) Pfosten. Ein Bogen in der Wischbewegung gibt dem Ball Effet."
+        hint = "Wische vom Ball in Richtung des Stern-Rings am \(starSideWord) Pfosten. Ein Bogen in der Wischbewegung gibt dem Ball Effet. (\(theme.specialHint))"
         recommendedPasses = 0
 
     case .throughBall:
         let bx = rng.range(-9.0, 9.0)
-        let by = rng.range(21.0, 26.0)
+        let by = clampD(rng.range(21.0, 26.0) + theme.ballStartYOffset, 10.0, 30.0)
         ballStart = Vec2(x: bx, y: by)
         let carrierWp = Vec2(x: bx * 0.8, y: by + 7.0)
         addHome(id: "h8", role: .ballCarrier, shirt: 8, pos: Vec2(x: bx, y: by - 0.7), wps: [carrierWp], speedBonus: 0.0)
 
         let mateSide: Double = bx >= 0 ? -1.0 : 1.0
         let mx = clampD(bx * -0.4 + mateSide * rng.range(5.0, 9.0), -16.0, 16.0)
-        let wp1 = Vec2(x: mx * 0.85, y: rng.range(36.0, 41.0))
-        let wp2 = Vec2(x: wp1.x * 0.7, y: rng.range(43.0, 45.5))
-        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: mx, y: 28.0), wps: [wp1, wp2], speedBonus: 0.3)
+        let wp1 = Vec2(x: mx * 0.85, y: clampD(rng.range(36.0, 41.0) + theme.ballStartYOffset * 0.5, 26.0, 42.0))
+        let wp2 = Vec2(x: wp1.x * 0.7, y: clampD(rng.range(43.0, 45.5) + theme.ballStartYOffset * 0.2, 38.0, 46.5))
+        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: mx, y: clampD(28.0 + theme.ballStartYOffset * 0.7, 18.0, 32.0)), wps: [wp1, wp2], speedBonus: 0.3)
 
         let firstSide = rng.sign()
         addLaneDefender(from: ballStart, to: wp1, t: 0.5, side: firstSide, role: .defender)
@@ -345,12 +347,12 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
 
         title = throughBallTitles[titleIndex]
         subtitle = "Spiele den Ball in den Lauf von Stürmer #9 und verwandle!"
-        hint = "Passe zuerst in den freien Laufweg von #9 (gestrichelter Pfeil). Sobald er den Ball annimmt, schieße in den \(starSideWord) Stern-Ring."
+        hint = "Passe zuerst in den freien Laufweg von #9 (gestrichelter Pfeil). Sobald er den Ball annimmt, schieße in den \(starSideWord) Stern-Ring. (\(theme.specialHint))"
         recommendedPasses = 1
 
     case .freeKick:
         let bx = rng.range(-9.0, 9.0)
-        let by = rng.range(27.0, 31.0)
+        let by = clampD(rng.range(27.0, 31.0) + theme.ballStartYOffset * 0.6, 18.0, 33.0)
         ballStart = Vec2(x: bx, y: by)
         addHome(id: "h10", role: .ballCarrier, shirt: 10, pos: Vec2(x: bx - 0.4, y: by - 0.8), wps: [], speedBonus: 0.0)
 
@@ -375,25 +377,25 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
 
         title = freeKickTitles[titleIndex]
         subtitle = "Zirkle den Freistoß mit Effet um die \(wallCount)er-Mauer ins Tor!"
-        hint = "Die Mauer springt beim Schuss hoch – schlage mit einem deutlichen Bogen in der Wischbewegung außen herum in den \(starSideWord) Stern-Ring."
+        hint = "Die Mauer springt beim Schuss hoch – schlage mit einem deutlichen Bogen in der Wischbewegung außen herum in den \(starSideWord) Stern-Ring. (\(theme.specialHint))"
         recommendedPasses = 0
 
     case .counterAttack:
         let bx = rng.range(-6.0, 6.0)
-        let by = rng.range(15.0, 21.0)
+        let by = clampD(rng.range(15.0, 21.0) + theme.ballStartYOffset * 0.8, 8.0, 22.0)
         ballStart = Vec2(x: bx, y: by)
         addHome(id: "h6", role: .ballCarrier, shirt: 6, pos: Vec2(x: bx, y: by - 0.7), wps: [Vec2(x: bx, y: by + 9.0)], speedBonus: 0.0)
 
         let flank = rng.sign()
         let wx = flank * rng.range(10.0, 13.0)
-        let wWp1 = Vec2(x: wx * 0.95, y: rng.range(36.0, 38.5))
+        let wWp1 = Vec2(x: wx * 0.95, y: clampD(rng.range(36.0, 38.5) + theme.ballStartYOffset * 0.5, 24.0, 40.0))
         let wWp2 = Vec2(x: wx * 0.7, y: 42.0)
         addHome(id: "h11", role: .winger, shirt: 11, pos: Vec2(x: wx, y: by + 4.0), wps: [wWp1, wWp2], speedBonus: 0.7)
 
         let sx = -flank * rng.range(2.0, 5.0)
-        let sWp1 = Vec2(x: sx * 0.7, y: rng.range(39.0, 41.0))
+        let sWp1 = Vec2(x: sx * 0.7, y: clampD(rng.range(39.0, 41.0) + theme.ballStartYOffset * 0.4, 28.0, 42.0))
         let sWp2 = Vec2(x: sx * 0.4, y: 44.5)
-        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: sx, y: 27.0), wps: [sWp1, sWp2], speedBonus: 0.3)
+        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: sx, y: clampD(27.0 + theme.ballStartYOffset * 0.6, 16.0, 29.0)), wps: [sWp1, sWp2], speedBonus: 0.3)
 
         let side = rng.sign()
         addLaneDefender(from: ballStart, to: sWp1, t: 0.55, side: side, role: .defender)
@@ -408,12 +410,12 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
 
         title = counterTitles[titleIndex]
         subtitle = "Schicke den Flügelflitzer #11 oder Stürmer #9 und schließe blitzschnell ab!"
-        hint = "Spiele zu #11 auf dem Flügel oder zu #9 in der Mitte. Von dort kannst du direkt in den \(starSideWord) Stern-Ring abschließen."
+        hint = "Spiele zu #11 auf dem Flügel oder zu #9 in der Mitte. Von dort kannst du direkt in den \(starSideWord) Stern-Ring abschließen. (\(theme.specialHint))"
         recommendedPasses = 1
 
     case .tikiTaka, .championshipFinal:
         let bx = rng.range(-8.0, 8.0)
-        let by = isFinal ? rng.range(10.0, 14.0) : rng.range(16.0, 22.0)
+        let by = clampD((isFinal ? rng.range(10.0, 14.0) : rng.range(16.0, 22.0)) + theme.ballStartYOffset * 0.8, 6.0, 24.0)
         ballStart = Vec2(x: bx, y: by)
         addHome(id: "h8", role: .ballCarrier, shirt: 8, pos: Vec2(x: bx, y: by - 0.7), wps: [Vec2(x: bx, y: by + 8.0)], speedBonus: 0.0)
 
@@ -424,14 +426,14 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
         addHome(id: "h10", role: .midfielder, shirt: 10, pos: Vec2(x: m1x, y: by + 4.5), wps: [m1Wp1, m1Wp2], speedBonus: 0.4)
 
         let sx = clampD(-side * rng.range(2.0, 6.0), -10.0, 10.0)
-        let sWp1 = Vec2(x: sx * 0.7, y: rng.range(39.0, 41.5))
+        let sWp1 = Vec2(x: sx * 0.7, y: clampD(rng.range(39.0, 41.5) + theme.ballStartYOffset * 0.4, 28.0, 43.0))
         let sWp2 = Vec2(x: sx * 0.4, y: 44.5)
-        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: sx, y: 30.0), wps: [sWp1, sWp2], speedBonus: 0.3)
+        addHome(id: "h9", role: .striker, shirt: 9, pos: Vec2(x: sx, y: clampD(30.0 + theme.ballStartYOffset * 0.5, 18.0, 32.0)), wps: [sWp1, sWp2], speedBonus: 0.3)
 
         if isFinal {
             let wx = side * rng.range(11.0, 14.0)
-            let wWp1 = Vec2(x: wx * 0.9, y: rng.range(37.0, 40.0))
-            addHome(id: "h7", role: .winger, shirt: 7, pos: Vec2(x: wx, y: 26.0), wps: [wWp1, Vec2(x: wx * 0.65, y: 43.0)], speedBonus: 0.8)
+            let wWp1 = Vec2(x: wx * 0.9, y: clampD(rng.range(37.0, 40.0) + theme.ballStartYOffset * 0.4, 26.0, 41.0))
+            addHome(id: "h7", role: .winger, shirt: 7, pos: Vec2(x: wx, y: clampD(26.0 + theme.ballStartYOffset * 0.6, 16.0, 28.0)), wps: [wWp1, Vec2(x: wx * 0.65, y: 43.0)], speedBonus: 0.8)
         }
 
         let firstSide = rng.sign()
@@ -449,12 +451,12 @@ fileprivate func makeGeneratedLevel(id: Int, chapterId: Int, indexInChapter n: I
         if isFinal {
             title = seed.league + "-Finale"
             subtitle = "Das Kapitel-Finale! Spiele dich durch die Abwehr und werde zum Helden!"
-            hint = "Meister-Spielzug: Spiele zu #10, dann in den Lauf von #9 oder #7 und schließe in den \(starSideWord) Stern-Ring ab."
+            hint = "Meister-Spielzug: Spiele zu #10, dann in den Lauf von #9 oder #7 und schließe in den \(starSideWord) Stern-Ring ab. (\(theme.specialHint))"
             recommendedPasses = 3
         } else {
             title = tikiTitles[titleIndex]
             subtitle = "Kombiniere über #10 und #9 – erst dann fällt das Tor!"
-            hint = "Spiele zuerst zu #10, von dort in den Lauf von #9 und schließe in den \(starSideWord) Stern-Ring ab."
+            hint = "Spiele zuerst zu #10, von dort in den Lauf von #9 und schließe in den \(starSideWord) Stern-Ring ab. (\(theme.specialHint))"
             recommendedPasses = 2
         }
     }
