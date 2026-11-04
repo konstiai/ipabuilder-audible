@@ -297,27 +297,31 @@ final class PhysicsEngine: ObservableObject {
 
         let swipeDir = chordDir
 
-        // 1. Check if the swipe points toward an open teammate (or their forward run waypoint)
+        // 1. Check if the swipe explicitly targets a teammate or into free space.
+        // We only lock onto a teammate if the swipe actually points directly at them (tight 14° cone, cos > 0.97)
+        // AND the user didn't draw a curving / bending pass into free space.
         var lockedTeammateId: String? = nil
-        var bestTeammateScore: Double = 0.85 // Minimum cosine similarity (~31° cone)
+        var bestTeammateScore: Double = 0.97 // Strict direct aim only (~14° cone)
         var teammateTargetPos: Vec2 = startPitch
 
-        for mate in players where mate.side == .home && !mate.hasBall {
-            let runPos = mate.runWaypoints.first ?? mate.position
-            for candidatePos in [runPos, mate.position] {
-                let toMate = candidatePos - startPitch
-                let distToMate = toMate.length()
-                guard distToMate > 2.5 else { continue }
-                let cosAngle = swipeDir.dot(toMate.normalized())
-                if cosAngle > bestTeammateScore {
-                    bestTeammateScore = cosAngle
-                    lockedTeammateId = mate.id
-                    teammateTargetPos = candidatePos
+        if abs(rawCurveNorm) < 0.22 {
+            for mate in players where mate.side == .home && !mate.hasBall {
+                let runPos = mate.runWaypoints.first ?? mate.position
+                for candidatePos in [runPos, mate.position] {
+                    let toMate = candidatePos - startPitch
+                    let distToMate = toMate.length()
+                    guard distToMate > 3.5 else { continue }
+                    let cosAngle = swipeDir.dot(toMate.normalized())
+                    if cosAngle > bestTeammateScore {
+                        bestTeammateScore = cosAngle
+                        lockedTeammateId = mate.id
+                        teammateTargetPos = candidatePos
+                    }
                 }
             }
         }
 
-        // 2. Ray-project forward swipes to the Goal Line (y = 52.0) or directly to where the drawn line ends
+        // 2. Ray-project forward swipes to the Goal Line (y = 52.0) or directly where the drawn line points
         var isGoalShot = false
         var finalTarget: Vec2
 
@@ -333,26 +337,27 @@ final class PhysicsEngine: ObservableObject {
         let directWeight = max(0.0, min(1.0, 1.0 - (distFromGoalScreenY - 25.0) / 120.0))
         let projectedGoalX = directGoalX * directWeight + rayGoalX * (1.0 - directWeight)
 
-        let aimedAtGoalMouth = (swipeDir.y > 0.25 && abs(projectedGoalX) <= PitchConstants.goalHalfWidth + 6.5)
+        let aimedAtGoalMouth = (swipeDir.y > 0.35 && abs(projectedGoalX) <= PitchConstants.goalHalfWidth + 3.5)
 
-        if let _ = lockedTeammateId, (!aimedAtGoalMouth || bestTeammateScore > 0.94) {
-            // Swipe is a Pass / Through-Ball to the teammate along the swipe ray
+        if let _ = lockedTeammateId, !aimedAtGoalMouth {
+            // User intentionally aimed straight at teammate
             isGoalShot = false
             finalTarget = teammateTargetPos
-        } else if swipeDir.y > 0.22 {
-            // Swipe is a Shot on Goal (or forward drive toward goal line)
+        } else if aimedAtGoalMouth || swipeDir.y > 0.45 {
+            // Swipe is a Shot on Goal
             isGoalShot = true
             let clampedGoalX = max(-PitchConstants.halfWidth + 2.0, min(PitchConstants.halfWidth - 2.0, projectedGoalX))
             finalTarget = Vec2(x: clampedGoalX, y: PitchConstants.goalLineY + 0.6)
             lockedTeammateId = nil
         } else {
-            // Sideways / diagonal pass into space
+            // Free space pass / curved pass: follows user's direction and curve exactly!
             isGoalShot = false
-            let passDist = 10.0 + powerNorm * 16.0
+            let passDist = 8.0 + powerNorm * 26.0
             finalTarget = Vec2(
                 x: max(-PitchConstants.halfWidth + 1.5, min(PitchConstants.halfWidth - 1.5, startPitch.x + swipeDir.x * passDist)),
                 y: max(PitchConstants.minY + 2.0, min(PitchConstants.goalLineY - 1.0, startPitch.y + swipeDir.y * passDist))
             )
+            lockedTeammateId = nil
         }
 
         let effectiveSwipeVec = finalTarget - startPitch
@@ -365,15 +370,15 @@ final class PhysicsEngine: ObservableObject {
         let horizontalSpeed: Double
         let loftZ: Double
         if isGoalShot {
-            // Short line = gentle roller / chip (8.0 m/s), Long line = thunderous shot (31.5 m/s)
-            horizontalSpeed = 8.0 + powerNorm * 23.5
+            // Short line = gentle roller / chip (8.0 m/s), 100% full line = massive cannon rocket (38.5 m/s)
+            horizontalSpeed = 8.0 + powerNorm * 30.5
             let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.38, max(0.40, 0.30 + powerNorm * 3.70))
-            let estTime = max(0.32, effectiveDist / horizontalSpeed)
+            let estTime = max(0.24, effectiveDist / horizontalSpeed)
             let g = 14.8
-            loftZ = max(1.2, min(9.6, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
+            loftZ = max(1.2, min(10.5, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
         } else {
-            // Short pass (6.5 m/s) to hard driven pass (25.0 m/s)
-            horizontalSpeed = 6.5 + powerNorm * 18.5
+            // Short pass (6.5 m/s) to hard driven pass (29.0 m/s)
+            horizontalSpeed = 6.5 + powerNorm * 22.5
             loftZ = effectiveDist > 18.0 ? (1.5 + powerNorm * 3.0) : (0.20 + powerNorm * 1.10)
         }
 
@@ -382,10 +387,10 @@ final class PhysicsEngine: ObservableObject {
         // Scale the user's drawn bulge onto the full shot distance so the ball follows the exact curve of the drawn line!
         // Positive desiredBulgeRightMeters = ball bulges to the RIGHT first, then curves LEFT into finalTarget (spinZ > 0)
         // Negative desiredBulgeRightMeters = ball bulges to the LEFT first, then curves RIGHT into finalTarget (spinZ < 0)
-        let desiredBulgeRightMeters = max(-8.0, min(8.0, bulgeRatio * effectiveDist * 1.15))
+        let desiredBulgeRightMeters = max(-10.0, min(10.0, bulgeRatio * effectiveDist * 1.35))
         let requiredMagnusAccel = (8.0 * desiredBulgeRightMeters) / max(0.12, estFlightTime * estFlightTime)
-        let speedScale = min(1.4, horizontalSpeed / 16.0)
-        let spinZ = max(-18.5, min(18.5, requiredMagnusAccel / max(0.6, 1.42 * speedScale)))
+        let speedScale = min(1.5, horizontalSpeed / 14.0)
+        let spinZ = max(-26.0, min(26.0, requiredMagnusAccel / max(0.6, 1.95 * speedScale)))
 
         // Initial velocity offset so the ball launches along the drawn curve and bends back into finalTarget
         let initialRightOffsetVel = (4.0 * desiredBulgeRightMeters) / estFlightTime
@@ -583,16 +588,33 @@ final class PhysicsEngine: ObservableObject {
     // MARK: - Phase Updates
 
     private func updateTacticalAiming(dt: Double) {
-        // Gentle idle animation and open pass callout pulsing
-        for i in players.indices {
+        // Maintain healthy spacing between teammates so they never crowd each other or the ball carrier
+        let minSpacing: Double = 6.2
+        for i in players.indices where players[i].side == .home {
             players[i].animPhase += dt * 3.5
-            if players[i].side == .home && !players[i].hasBall {
-                // Orient slightly toward ball carrier
-                let toBall = ball.position.xy - players[i].position
-                let runTarget = players[i].runWaypoints.first ?? Vec2(x: players[i].position.x, y: players[i].position.y + 6.0)
-                let toRun = runTarget - players[i].position
-                let blendDir = (toBall.normalized() * 0.35 + toRun.normalized() * 0.65)
-                players[i].facingAngle = atan2(blendDir.x, blendDir.y)
+
+            if !players[i].hasBall {
+                // Keep distance from ball carrier
+                let toBall = players[i].position - ball.position.xy
+                let distToBall = toBall.length()
+                if distToBall < minSpacing && distToBall > 0.001 {
+                    let push = toBall.normalized() * ((minSpacing - distToBall) * min(1.0, dt * 2.5))
+                    players[i].position = players[i].position + push
+                }
+
+                // Keep distance between fellow teammates
+                for j in players.indices where players[j].side == .home && i != j && !players[j].hasBall {
+                    let diff = players[i].position - players[j].position
+                    let d = diff.length()
+                    if d < minSpacing && d > 0.001 {
+                        let push = diff.normalized() * ((minSpacing - d) * min(1.0, dt * 2.5))
+                        players[i].position = players[i].position + push
+                    }
+                }
+
+                // Orient slightly toward goal / ball
+                let lookTarget = Vec2(x: players[i].position.x * 0.7, y: PitchConstants.goalLineY) - players[i].position
+                players[i].facingAngle = atan2(lookTarget.x, lookTarget.y)
             }
         }
     }
@@ -771,7 +793,7 @@ final class PhysicsEngine: ObservableObject {
         if speedXY > 0.5 {
             let nx = -vel.y / speedXY
             let ny = vel.x / speedXY
-            let magnusFactor = 1.42 * spinZ * min(1.4, speedXY / 16.0)
+            let magnusFactor = 1.95 * spinZ * min(1.5, speedXY / 14.0)
             magnusAx = nx * magnusFactor
             magnusAy = ny * magnusFactor
         }
@@ -1195,15 +1217,14 @@ final class PhysicsEngine: ObservableObject {
 
         players[i].facingAngle = .pi
 
-        // Uniform Goalkeeper Save Zone: the exact same hitbox size everywhere in the goal
-        // (center, sides and corners) - independent of dive state or dive height.
+        // Uniform Goalkeeper Save Zone: perfectly balanced and fair everywhere in the goal
         if phase == .ballInFlight && pendingFailReason == nil {
             let dx = abs(ball.position.x - players[i].position.x)
             let dy = abs(ball.position.y - players[i].position.y)
-            let keeperReachX = 2.4
-            let keeperReachZ = 3.1
+            let keeperReachX = 1.65
+            let keeperReachZ = 2.65
 
-            if dy < 1.0 && dx < keeperReachX && ball.position.z <= keeperReachZ {
+            if dy < 0.85 && dx < keeperReachX && ball.position.z <= keeperReachZ {
                 // Keeper parries the shot outward with realistic glove deflection!
                 let sidePush = (ball.position.x >= players[i].position.x) ? 7.5 : -7.5
                 ball.velocity.y = -abs(ball.velocity.y) * 0.36 - 2.5
