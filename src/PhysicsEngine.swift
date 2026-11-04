@@ -263,15 +263,13 @@ final class PhysicsEngine: ObservableObject {
             return nil
         }
 
-        let elapsed = max(0.035, min(0.80, Date().timeIntervalSinceReferenceDate - swipeStartTime))
-        let screenSpeed = directScreenDrag / elapsed
-        let predictedMomentum = hypot(Double(predictedEnd.x - endPoint.x), Double(predictedEnd.y - endPoint.y))
-
-        // Normalize flick power from swipe distance + swipe speed
-        let speedFactor = max(0.0, min(1.0, (screenSpeed - 140.0) / 820.0))
-        let distFactor = max(0.0, min(1.0, (directScreenDrag - 18.0) / 145.0))
-        let momentumFactor = max(0.0, min(1.0, predictedMomentum / 160.0))
-        let powerNorm = max(0.24, min(1.0, max(speedFactor * 0.65 + distFactor * 0.45, max(distFactor, momentumFactor * 0.75))))
+        // Normalize power purely from drawn line length on screen / pitch distance:
+        // Short line = slow, delicate shot / pass.
+        // Long line = powerful cannon shot / long ball.
+        // 15 pt (short drag) -> 0.05 powerNorm
+        // 220 pt (long drag across screen) -> 1.0 powerNorm
+        let distFactor = max(0.0, min(1.0, (directScreenDrag - 15.0) / 205.0))
+        let powerNorm = max(0.05, min(1.0, distFactor))
 
         let startPitch = ball.position.xy
         // Always use the exact endPoint of the drawn line so the shot matches the drawn line 1:1
@@ -367,14 +365,16 @@ final class PhysicsEngine: ObservableObject {
         let horizontalSpeed: Double
         let loftZ: Double
         if isGoalShot {
-            horizontalSpeed = 18.0 + powerNorm * 13.5
-            let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.38, max(0.65, 0.55 + powerNorm * 3.45))
+            // Short line = gentle roller / chip (8.0 m/s), Long line = thunderous shot (31.5 m/s)
+            horizontalSpeed = 8.0 + powerNorm * 23.5
+            let desiredGoalZ = min(PitchConstants.crossbarHeight - 0.38, max(0.40, 0.30 + powerNorm * 3.70))
             let estTime = max(0.32, effectiveDist / horizontalSpeed)
             let g = 14.8
-            loftZ = max(2.0, min(9.6, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
+            loftZ = max(1.2, min(9.6, (desiredGoalZ + 0.5 * g * estTime * estTime) / estTime))
         } else {
-            horizontalSpeed = 14.0 + powerNorm * 11.0
-            loftZ = effectiveDist > 18.0 ? (2.0 + powerNorm * 2.5) : (0.35 + powerNorm * 0.95)
+            // Short pass (6.5 m/s) to hard driven pass (25.0 m/s)
+            horizontalSpeed = 6.5 + powerNorm * 18.5
+            loftZ = effectiveDist > 18.0 ? (1.5 + powerNorm * 3.0) : (0.20 + powerNorm * 1.10)
         }
 
         let estFlightTime = max(0.26, effectiveDist / horizontalSpeed)
@@ -672,12 +672,12 @@ final class PhysicsEngine: ObservableObject {
             return
         }
 
-        if flightDuration > 0.65 && ball.velocity.length() < 1.35 {
+        if flightDuration > 1.2 && ball.velocity.length() < 0.85 {
             triggerPlayFailed(reason: "Spielzug gestoppt – kein Mitspieler erreicht!")
             return
         }
 
-        if flightDuration > 4.2 {
+        if flightDuration > 5.5 {
             triggerPlayFailed(reason: "Zeit abgelaufen!")
             return
         }
